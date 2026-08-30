@@ -1,0 +1,28 @@
+# Claude Code local settings
+.claude/
+
+# Generated knowledge-graph output
+graphify-out/
+
+# Duplicate working copy of the sketch (canonical source: CR_Monitor/CR_Monitor.ino)
+CR_Monitor.cpp
+
+# Local secrets — never commit real Wi-Fi / broker credentials
+secrets.h
+
+# Arduino build artifacts
+build/
+*.bin
+*.elf
+*.hex
+
+# Docker volumes / local service data
+influxdb-data/
+grafana-data/
+nodered-data/
+mosquitto-data/
+
+# OS cruft
+Thumbs.db
+desktop.ini
+.DS_Store

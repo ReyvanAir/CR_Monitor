@@ -1,0 +1,58 @@
+# Classroom Monitor - Stage 3 stack
+#   mosquitto  : MQTT broker           localhost:1883
+#   influxdb   : time-series storage   http://localhost:8086
+#   nodered    : clean + rules + write http://localhost:1880
+#   grafana    : dashboards            http://localhost:3000  (admin/admin)
+#
+# Start:  docker compose up -d
+# Stop:   docker compose down          (data is kept in named volumes)
+# Logs:   docker compose logs -f mosquitto
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+
+  nodered:
+    image: nodered/node-red:latest
+    container_name: nodered
+    restart: unless-stopped
+    ports:
+      - "1880:1880"
+    volumes:
+      - nodered-data:/data
+    depends_on:
+      - mosquitto
+      - influxdb
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - influxdb
+
+volumes:
+  mosquitto-data:
+  influxdb-data:
+  nodered-data:
+  grafana-data:

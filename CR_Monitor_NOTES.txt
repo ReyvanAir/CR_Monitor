@@ -1,0 +1,312 @@
+======================================================================
+CR_Monitor - DESIGN NOTES
+Classroom Environment Monitor, Stage 2 (real hardware)
+======================================================================
+
+This file holds the "why" that used to live as long comments inside
+CR_Monitor.cpp. The code now only carries short section headers
+(PINS, WI-FI, MQTT, SOUND, ...). Read this alongside it.
+
+Board:  ESP32-S3 DevKitC-1 (N16R8)
+  Arduino IDE:  Tools > Board > "ESP32S3 Dev Module"
+                PSRAM: "OPI PSRAM"   Flash Size: "16MB"
+
+Libraries (Library Manager):
+  - Adafruit SHT31 Library   (Adafruit)      + Adafruit BusIO
+  - BH1750                    (Christopher Laws)
+  - PubSubClient              (Nick O'Leary)
+
+
+----------------------------------------------------------------------
+1. WIRING
+----------------------------------------------------------------------
+
+I2C bus - SDA = GPIO8, SCL = GPIO9:
+    SHT3x    addr 0x44 (ADDR->GND) or 0x45 (ADDR->VDD)   power 3.3V
+    BH1750   addr 0x23 (ADDR->GND) or 0x5C (ADDR->VDD)   power 3.3V
+  Both wired straight to GPIO 8/9 on the 3.3V side.
+  Run the I2C bus at 100 kHz (Wire.setClock(100000)).
+
+MAX4466 microphone:
+    VCC -> 3.3V   (NOT 5V - the output centres at VCC/2; on 5V it
+                   swings past the ESP32 ADC's 3.3V limit and can
+                   damage the pin)
+    OUT -> GPIO5  (MIC_PIN)
+    GND -> GND    (must share ground with the ESP32)
+
+  GPIO5 must be an ADC1 pin. ADC2 stops working whenever Wi-Fi is on,
+  so the mic cannot move to an ADC2 pin.
+
+Buzzer:
+    + -> GPIO7 (BUZZER_PIN)
+    - -> GND
+  A piezo buzzer can be driven directly. A magnetic buzzer needs a
+  transistor plus a flyback diode.
+
+LCD (currently NOT used):
+  The 20x4 I2C LCD backpack is dead / not wired. Everything it used to
+  show is printed to the Serial monitor instead (the "status panel").
+  The backpack also pulls SDA/SCL to 5V and the ESP32-S3 is not 5V
+  tolerant - if the LCD comes back it needs a bidirectional level
+  shifter between GPIO 8/9 and the LCD (LV->3V3, HV->5V, common GND),
+  with the SHT3x and BH1750 staying on the 3.3V side.
+  To re-enable: add <LiquidCrystal_I2C.h>, the lcd object, lcd.init()
+  in setup(), and feed the panel fields to lcd rows.
+
+History: the DHT22 was removed. The SHT3x replaces it and speaks I2C,
+which got rid of the bit-banged timing that never worked reliably on
+the ESP32-S3. GPIO4 and GPIO6 are now free.
+
+
+----------------------------------------------------------------------
+2. PINS  (matches the PINS block in the code)
+----------------------------------------------------------------------
+
+  I2C_SDA    = 8
+  I2C_SCL    = 9
+  MIC_PIN    = 5   (ADC1 only)
+  BUZZER_PIN = 7
+
+  SHT3X_ADDR  = 0x44   (0x45 if the ADDR pin is tied high)
+  BH1750_ADDR = 0x23   (0x5C if the ADDR pin is tied high)
+
+
+----------------------------------------------------------------------
+3. WI-FI  (state machine)
+----------------------------------------------------------------------
+
+handleWifi() is called once per loop() and never blocks. States:
+
+    SCAN --(SSID seen)--> CONNECTING --(connected)--> CONNECTED
+     ^                        |                           |
+     |                 (timeout / fail)              (link drops)
+     |                        v                           v
+     +-------------------- WAIT_RETRY <-------------------+
+
+  SCAN        - scan for the configured SSID; if present, WiFi.begin().
+  CONNECTING  - wait up to WIFI_CONNECT_TIMEOUT_MS (15 s) for a link.
+  CONNECTED   - steady state; drop back to WAIT_RETRY if the link dies.
+  WAIT_RETRY  - hold for WIFI_RETRY_DELAY_MS (5 s), then SCAN again.
+
+Sensors and the buzzer keep working in every state. This is
+deliberate: the local audible alarm must NOT depend on the LAN.
+
+Set WIFI_SSID / WIFI_PASSWORD at the top of the code.
+
+
+----------------------------------------------------------------------
+4. MQTT  (Stage 2 transport)
+----------------------------------------------------------------------
+
+The ESP32 only PUBLISHES. Validation, the "official" alert rules, the
+occupancy merge and storage all live in Node-RED downstream. Keep this
+node dumb: sample, package, publish.
+
+Client: PubSubClient over a plain WiFiClient. mqttService() runs once
+per loop(), downstream of the Wi-Fi state machine - it does nothing
+until Wi-Fi is CONNECTED, and never blocks longer than ~3 s
+(setSocketTimeout(3)) when the broker is unreachable. It retries every
+MQTT_RECONNECT_MS (5 s).
+
+Config (top of code):
+  MQTT_HOST   - broker IP or hostname on the LAN
+  MQTT_PORT   - 1883 (plaintext). Use 8883 + TLS before real deployment.
+  MQTT_USER / MQTT_PASS  -  "" = anonymous (LAN testing only)
+  ROOM_ID     - set per room, e.g. "room-101"
+
+Node id: the low 3 bytes of the MAC, hex. Each board self-names, so
+you can add more nodes without editing anything.
+
+Topics (namespaced so more nodes / subscribers can be added freely):
+
+  classroom/<room>/<node>/telemetry
+      JSON sensor reading, published every READ_INTERVAL_MS (2 s).
+      QoS 0 (a dropped 2-second sample does not matter).
+      Fields:
+        ts               epoch seconds (0 until NTP has synced)
+        ts_valid         true once the clock is real
+        uptime_ms        millis() since boot
+        seq              incrementing counter - lets Node-RED spot gaps
+        temp_c, hum_pct  null when the SHT3x read failed
+        lux              null when the BH1750 read failed
+        sound_avg_db     continuous level (trend analysis)
+        sound_peak_db    loudest transient (exceedance analysis)
+        sound_calibrated false until MIC_CAL_DB is set - trust flag
+        alerts           3 chars, e.g. "T-S" (temp+sound), "---" = none
+        rssi             Wi-Fi signal, dBm
+
+  classroom/<room>/<node>/status
+      "online" / "offline", RETAINED.
+      "online" is published on connect. "offline" is the MQTT Last
+      Will - the broker publishes it automatically if the node drops
+      off the network (after the keepalive lapses). This is how the
+      dashboard tells "room is quiet" from "node is dead".
+
+  classroom/<room>/<node>/alert
+      Current alert state as JSON {"temp":bool,"light":bool,"sound":bool},
+      RETAINED. Published only when the combined state changes (or on
+      reconnect), so a subscriber that joins late still gets it.
+
+PubSubClient only does QoS 0. The retained status/alert topics cover
+the "must not be missed" cases instead. If you later need guaranteed
+alert delivery, switch to the 256dpi/arduino-mqtt library.
+
+
+----------------------------------------------------------------------
+5. TIME (NTP)
+----------------------------------------------------------------------
+
+millis() resets on every reboot, so it is useless for aligning sensor
+records with the occupancy bucket and the feedback form. configTime()
+in setup() starts an SNTP sync the moment Wi-Fi comes up; timeValid()
+returns true once the clock is past TIME_VALID_MIN (2023-11-14) - i.e.
+actually set rather than sitting at the 1970 epoch.
+
+Store UTC (GMT_OFFSET_SEC = 0). Convert to local time in Grafana.
+
+
+----------------------------------------------------------------------
+6. THRESHOLDS + HYSTERESIS
+----------------------------------------------------------------------
+
+TEMP_MAX_C / TEMP_MIN_C, LUX_MIN / LUX_MAX, SOUND_MAX_DB are
+PLACEHOLDERS. Before collecting real data, justify each against a
+cited standard - local building code, ASHRAE 55 for thermal comfort,
+EN 12464-1 for lighting - and record the citation in the methodology.
+
+Hysteresis (TEMP_HYST, LUX_HYST, SOUND_HYST): once an alarm is
+latched, the reading must come back this far INSIDE the band before it
+clears. This stops the alarm chattering when a value sits exactly on
+the limit, and stops one real event being logged as dozens of
+separate exceedances.
+
+Note: these local buzzer thresholds now DUPLICATE the alert rules that
+Node-RED will apply. Either keep them in sync, or treat the on-board
+ones as a deliberately looser "something is badly wrong" trigger and
+document that choice.
+
+
+----------------------------------------------------------------------
+7. SOUND MEASUREMENT + CALIBRATION   (important)
+----------------------------------------------------------------------
+
+The MAX4466 is a bare electret microphone plus an amplifier. It is NOT
+a sound-level meter. Everything past its output voltage is assumption.
+Report it as a "relative acoustic level, calibrated at two points",
+never as a certified dB(A) figure.
+
+How the number is built:
+  1. calibrateMicBias() at boot averages ~2000 samples with the room
+     quiet to find the DC operating point (~VCC/2, ~1.65 V, ~2048
+     counts). Stored in micBias.
+  2. readSound() samples MIC_PIN for MIC_WINDOW_MS (100 ms), split
+     into 10 ms sub-windows. Per sub-window it computes the RMS of
+     (sample - micBias) - i.e. the AC part only.
+  3. Each sub-window RMS is converted to dB:
+        dB = 20*log10(Vrms / MIC_REF_V) + MIC_DB_OFFSET + MIC_CAL_DB
+     Sub-window dBs are averaged (soundAvgDb) and maxed (soundMaxDb).
+  4. ESP32 analogRead() occasionally glitches to 0 or 4095, worse with
+     Wi-Fi on. Those samples are dropped - one spike wrecks the RMS.
+
+Why MIC_CAL_DB is mandatory:
+  MIC_REF_V (6.31 mV/Pa) and MIC_DB_OFFSET (94) describe the BARE
+  electret. The module's gain trimpot multiplies the signal 25x-125x,
+  which adds a fixed +28..+42 dB error. Uncalibrated, a ~40 dB room
+  reads ~115 dB. MIC_CAL_DB is the correction.
+
+  Current value: MIC_CAL_DB = -77.0  (set 2026-08-28: panel showed
+  ~116 dB in a room measured at ~39 dB, so 39 - 116).
+
+One-point calibration procedure (quiet end):
+  1. Set MIC_CAL_DB = 0, flash, let the room be quiet.
+  2. Note the steady "avg" dB from the status panel.
+  3. Measure the real level with an SPL meter / phone app (a quiet
+     room is ~35-40 dB).
+  4. MIC_CAL_DB = (real_dB - panel_dB). Flash again.
+
+Verify at the loud end:
+  Play a steady tone / run a noisy appliance, compare panel vs meter.
+   - Off by a CONSTANT amount everywhere -> adjust MIC_CAL_DB.
+   - Fine when quiet, wrong when loud -> the amp is CLIPPING. Turn the
+     gain trimpot down (counter-clockwise ~1/2 turn) and redo the
+     quiet calibration.
+
+SOUND_DEBUG:
+  When true (default), readSound() prints a raw line each read:
+    # mic raw: mean=1925 min=1719 max=2077 p-p=358  (bias=1922)
+  Use it to check wiring BEFORE trusting any dB value:
+    connected, quiet   : mean ~1900-2100, p-p a few tens
+    connected, clap    : p-p jumps to hundreds / thousands
+    disconnected       : mean drifts, p-p large & random  <- floating
+                         pin, NOT a real 140 dB
+  Set SOUND_DEBUG false once you trust the setup, to quiet the log.
+
+The sound alarm (buzzer) stays disabled until MIC_CAL_DB != 0, because
+an uncalibrated level would trip it constantly. It still logs and
+publishes the whole time.
+
+avg vs peak: sound is bursty. avg approximates a continuous level for
+trend analysis; peak catches transients for exceedance analysis. Both
+are logged and published. Peak drives the alarm - a loud transient is
+what people in the room actually notice.
+
+
+----------------------------------------------------------------------
+8. BUZZER (non-blocking beeper)
+----------------------------------------------------------------------
+
+startAlarm(beeps, freq) queues a pattern; serviceAlarm() (called every
+loop pass) steps it using millis(), no delay(). A delay() here would
+stall the sensor loop and the MQTT client mid-publish.
+
+  temp alert  : 3 beeps @ 2200 Hz
+  light alert : 2 beeps @ 1200 Hz
+  sound alert : 4 beeps @ 1700 Hz
+  boot        : 2 beeps @ 1500 Hz  (also a buzzer self-test)
+
+A new pattern is ignored until the current one finishes.
+
+
+----------------------------------------------------------------------
+9. SERIAL OUTPUT
+----------------------------------------------------------------------
+
+Two things print every READ_INTERVAL_MS at 115200 baud:
+
+  a) Status panel - human readable, the old LCD content:
+       +------------------------------+
+       | Classroom Monitor
+       | Temp : 24.3 C
+       | Humid: 46.7 %
+       | Light: 420 lx
+       | Sound: 58 dB peak (avg 47 dB, 3.21 mVrms)
+       | Wi-Fi: connected
+       | MQTT : connected, seq 42, time ok
+       +------------------------------+
+
+  b) CSV line - for local logging / spreadsheet import:
+       time_ms,temp_c,humidity_pct,lux,sound_avg_db,sound_peak_db,alerts
+       12345,24.30,46.70,420.0,47.2,58.1,---
+
+Lines beginning with '#' are diagnostics (read failures, alerts,
+mic raw stats), not data.
+
+The CSV is independent of MQTT - it keeps working with no network.
+
+
+----------------------------------------------------------------------
+10. LOOP STRUCTURE
+----------------------------------------------------------------------
+
+Every pass (fast, non-blocking):
+    serviceAlarm()   - step the buzzer pattern
+    handleWifi()     - advance the Wi-Fi state machine
+    mqttService()    - keep the MQTT link up / reconnect
+
+Every READ_INTERVAL_MS (2 s):
+    read SHT3x, BH1750, MAX4466
+    evaluateAlarms() - latch/clear temp, light, sound alarms
+    publishAlertState() - retained MQTT, only on change
+    printPanel()     - status panel to Serial
+    print CSV line
+    publishTelemetry() - JSON to MQTT (no-op if the link is down)

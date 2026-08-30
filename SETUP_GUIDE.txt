@@ -1,0 +1,462 @@
+======================================================================
+CLASSROOM MONITOR - STAGE 2 & 3 SETUP WALKTHROUGH
+From "ESP32 prints to Serial" to "data in a Grafana dashboard"
+======================================================================
+
+You have never done this before - that is fine. Follow the parts in
+order. Do not skip. Each part ends with a CHECK: do not move on until
+the check passes.
+
+What you are building (recap):
+
+  ESP32  --Wi-Fi/MQTT-->  Mosquitto (broker)  -->  Node-RED (clean +
+  rules)  -->  InfluxDB (storage)  -->  Grafana (dashboard)
+
+  MQTTX is just a viewer you use to confirm messages are flowing.
+
+Time: about 2-3 hours the first time, most of it waiting on downloads.
+
+Files in this folder that this guide uses:
+  docker-compose.yml   - starts the broker + Node-RED + InfluxDB + Grafana
+  mosquitto.conf       - broker config (already filled in)
+  CR_Monitor.cpp       - the ESP32 sketch
+  CR_Monitor_NOTES.txt - design reference
+
+
+======================================================================
+PART 0 - PREREQUISITES
+======================================================================
+
+0.1  Find your PC's LAN IP address. Open PowerShell and run:
+
+        ipconfig
+
+     Look for "IPv4 Address" under your active adapter (Wi-Fi or
+     Ethernet). It looks like 192.168.1.23 or 10.0.0.5. WRITE IT DOWN
+     - this guide calls it  <PC_IP>.
+
+     Your ESP32 and your PC must be on the SAME network (same router,
+     same Wi-Fi). A "guest" Wi-Fi usually blocks this - use the main
+     one.
+
+0.2  Decide which sketch file is real.
+
+     Your project currently has TWO copies:
+        D:\Suvin's Project\CR_Monitor.cpp            <- the one we edit
+        D:\Suvin's Project\CR_Monitor\CR_Monitor.ino <- older, stale
+
+     The Arduino IDE compiles a folder named X containing X.ino. So:
+       - Make a folder  D:\Suvin's Project\CR_Monitor\
+       - Put the CURRENT code in it as  CR_Monitor.ino
+       - Easiest: open CR_Monitor.cpp, Select All, Copy. Open
+         CR_Monitor\CR_Monitor.ino in the Arduino IDE, Select All,
+         Paste, Save.
+       - From now on only edit the .ino. Delete or ignore the .cpp so
+         you never flash the old version by mistake.
+
+     (If you already do it a different way that works - keep doing
+     that. The point is: ONE file is the real one.)
+
+CHECK 0:  You have <PC_IP> written down, and you know which file you
+          flash to the board.
+
+
+======================================================================
+PART 1 - ESP32 SIDE (finish Stage 2)
+======================================================================
+
+1.1  Install the MQTT library.
+     Arduino IDE > Tools > Manage Libraries > search "PubSubClient" >
+     install the one by Nick O'Leary.
+     (You should already have: Adafruit SHT31, Adafruit BusIO, BH1750.)
+
+1.2  Edit the config at the top of the sketch:
+
+        WIFI_SSID / WIFI_PASSWORD   - your Wi-Fi (replace the placeholders)
+        MQTT_HOST = "<PC_IP>"       - the address from Part 0
+        ROOM_ID   = "room-101"      - any short name for the room
+
+1.3  Flash the board. Open Serial Monitor at 115200 baud.
+
+1.4  You should see, within ~15 seconds:
+        Wi-Fi: connected, IP 192.168.x.x
+        MQTT: node id a1b2c3, topic base classroom/room-101/a1b2c3
+        MQTT: connecting to <PC_IP>:1883... failed, rc=-2
+
+     "failed" is EXPECTED right now - the broker does not exist yet.
+     Everything else (Wi-Fi connected, node id printed) must be there.
+
+CHECK 1:  Serial Monitor shows "Wi-Fi: connected" and an IP address,
+          and the status panel prints every 2 seconds.
+
+
+======================================================================
+PART 2 - INSTALL DOCKER DESKTOP
+======================================================================
+
+Docker lets you run the broker, Node-RED, InfluxDB and Grafana as one
+bundle instead of four separate installers. Strongly recommended.
+
+2.1  Download "Docker Desktop for Windows":
+        https://www.docker.com/products/docker-desktop/
+
+2.2  Run the installer. Accept the WSL2 option if it asks. Reboot if
+     told to.
+
+2.3  Launch Docker Desktop. Wait until the whale icon in the system
+     tray is steady (not animating). First start takes a few minutes.
+
+2.4  Confirm it works - in PowerShell:
+        docker run hello-world
+     You should see "Hello from Docker!".
+
+CHECK 2:  "docker run hello-world" prints the hello message.
+
+     ---- No Docker? (fallback) ----
+     You can install each service natively instead:
+        Mosquitto : https://mosquitto.org/download/  (Windows installer)
+        Node.js   : https://nodejs.org/  then:  npm install -g node-red
+        InfluxDB 2: https://www.influxdata.com/downloads/ (Windows)
+        Grafana   : https://grafana.com/grafana/download?platform=windows
+     Then start each one and skip to Part 5. The rest of the guide
+     still applies, only the "bring the stack up" step differs.
+
+
+======================================================================
+PART 3 - THE STACK FILES  (already created for you)
+======================================================================
+
+Two files are in this folder next to the guide:
+
+  mosquitto.conf     - tells the broker to listen on port 1883 and
+                       allow anonymous connections (fine for a LAN /
+                       school project; add passwords before anything
+                       real).
+
+  docker-compose.yml - defines the four services and how they connect.
+                       It also creates local folders for saved data so
+                       nothing is lost when you restart.
+
+You do not need to edit either one to get started. Open them in a text
+editor if you want to see what they do.
+
+
+======================================================================
+PART 4 - BRING THE STACK UP
+======================================================================
+
+4.1  In PowerShell, go to this folder:
+
+        cd "D:\Suvin's Project"
+
+4.2  Start everything:
+
+        docker compose up -d
+
+     First run downloads the images (a few hundred MB). "-d" means it
+     runs in the background.
+
+4.3  Check all four are running:
+
+        docker compose ps
+
+     You want STATUS "Up" or "running" for: mosquitto, nodered,
+     influxdb, grafana.
+
+4.4  Web pages now available (open in a browser):
+        Node-RED   http://localhost:1880
+        InfluxDB   http://localhost:8086
+        Grafana    http://localhost:3000   (login admin / admin)
+
+     To STOP everything later:   docker compose down
+     Your data survives a  down/up  cycle.
+
+CHECK 4:  "docker compose ps" shows 4 services Up, and
+          http://localhost:1880 loads the Node-RED editor.
+
+
+======================================================================
+PART 5 - CONFIRM THE ESP32 IS PUBLISHING  (MQTTX)
+======================================================================
+
+5.1  The broker is live now. Look at the ESP32 Serial Monitor - within
+     5 seconds the line should change to:
+
+        MQTT: connecting to <PC_IP>:1883... connected
+
+     and the status panel's MQTT line becomes:
+
+        | MQTT : connected, seq 12, time NOT synced
+
+     ("time NOT synced" fixes itself within ~10 s once NTP responds.)
+
+5.2  Install MQTTX (the desktop client):
+        https://mqttx.app/  > Download for Windows
+
+5.3  In MQTTX:  + New Connection
+        Name:  local
+        Host:  localhost      Port: 1883
+        (leave username/password empty)
+      Click Connect.
+
+5.4  Add a subscription:  + New Subscription
+        Topic:  classroom/#
+      Click Confirm.
+
+5.5  Every 2 seconds a message appears on
+     classroom/room-101/<node>/telemetry  like:
+
+        {"ts":1724835600,"ts_valid":true,"uptime_ms":40100,"seq":20,
+         "temp_c":24.30,"hum_pct":46.70,"lux":420.0,
+         "sound_avg_db":41.2,"sound_peak_db":58.6,
+         "sound_calibrated":true,"alerts":"---","rssi":-43}
+
+5.6  Test the Last Will: unplug the ESP32. After ~45 seconds a
+     message  "offline"  appears on  .../status.  Plug it back in ->
+     "online".
+
+CHECK 5:  telemetry JSON arrives in MQTTX every 2 s, and ts_valid is
+          true.  If not, see TROUBLESHOOTING at the bottom.
+
+
+======================================================================
+PART 6 - INFLUXDB: MAKE A PLACE TO STORE DATA
+======================================================================
+
+6.1  Open http://localhost:8086. First-time setup screen:
+        Username:      you pick
+        Password:      you pick (>= 8 chars)
+        Organization:  classroom
+        Bucket:        sensors
+      Click Continue / Save.
+
+6.2  Create an API token for Node-RED to use:
+        Load Data (left menu) > API Tokens > Generate API Token >
+        "All Access API Token" (fine for a project) > name it
+        "node-red" > Save.
+      COPY the token string now - you cannot see it again later.
+      Paste it somewhere safe.
+
+CHECK 6:  You have: org = classroom, bucket = sensors, and a copied
+          API token.
+
+
+======================================================================
+PART 7 - NODE-RED: CLEAN THE DATA AND STORE IT
+======================================================================
+
+Node-RED is a visual wiring tool. You drag "nodes" onto a canvas and
+connect them. We build: MQTT in -> parse JSON -> sanity check ->
+InfluxDB out.
+
+7.1  Open http://localhost:1880.
+
+7.2  Install the InfluxDB nodes:
+        top-right menu (three bars) > Manage palette > Install tab >
+        search "node-red-contrib-influxdb" > Install.
+
+7.3  Build the flow. From the left palette, drag these onto the canvas
+     left to right and wire them in a line (drag from the little grey
+     port on the right of one node to the left port of the next):
+
+     (a) "mqtt in" node.  Double-click it:
+            Server: click the pencil > Server: mosquitto  Port: 1883
+                    > Add / Update
+            Topic:  classroom/+/+/telemetry
+            Output: "a parsed JSON object"
+            QoS: 0
+         Done.
+
+     (b) "function" node - name it "validate". Paste this code:
+
+            const d = msg.payload;
+            // drop anything not shaped like our telemetry
+            if (typeof d !== 'object' || d.seq === undefined) return null;
+            // range sanity - reject impossible readings
+            const bad =
+              (d.temp_c !== null && (d.temp_c < -10 || d.temp_c > 60)) ||
+              (d.hum_pct !== null && (d.hum_pct < 0 || d.hum_pct > 100)) ||
+              (d.lux !== null && (d.lux < 0 || d.lux > 120000)) ||
+              (d.sound_peak_db < 0 || d.sound_peak_db > 140);
+            if (bad) { node.warn('rejected: ' + JSON.stringify(d)); return null; }
+            // split topic classroom/<room>/<node>/telemetry
+            const parts = msg.topic.split('/');
+            msg.room = parts[1];
+            msg.node = parts[2];
+            return msg;
+
+     (c) "influxdb out" node.  Double-click it:
+            Server: pencil >
+                Version: 2.0
+                URL: http://influxdb:8086
+                Token: (paste the API token from Part 6)
+                Organization: classroom
+                Bucket: sensors
+              > Add / Update
+            Measurement: reading
+
+     (d) OPTIONAL "debug" node wired off the "validate" output so you
+         can watch messages in the right-hand Debug panel.
+
+7.4  Click "Deploy" (top right).
+
+7.5  Watch the Debug panel (bug icon, top right). Every 2 seconds a
+     validated message should appear. The mqtt node should say
+     "connected" under it.
+
+CHECK 7:  Debug panel shows a telemetry object every 2 s and the
+          InfluxDB node shows no error.
+
+
+======================================================================
+PART 8 - INFLUXDB: CONFIRM DATA IS LANDING
+======================================================================
+
+8.1  Open http://localhost:8086 > Data Explorer (graph icon, left).
+
+8.2  Build a quick query:
+        FROM: sensors
+        Filter: _measurement = reading
+        Filter: _field = temp_c
+        > Submit
+     You should see your temperature line, updating.
+
+CHECK 8:  Data Explorer shows a temp_c series with recent points.
+
+
+======================================================================
+PART 9 - GRAFANA: THE DASHBOARD
+======================================================================
+
+9.1  Open http://localhost:3000 (admin / admin, set a new password).
+
+9.2  Add InfluxDB as a data source:
+        Connections > Data sources > Add data source > InfluxDB
+          Query language: Flux
+          URL: http://influxdb:8086
+          Organization: classroom
+          Token: (the same API token)
+          Default bucket: sensors
+        > Save & test  -> "datasource is working".
+
+9.3  New dashboard > Add visualization > pick the InfluxDB source.
+     Paste this Flux query for temperature:
+
+        from(bucket: "sensors")
+          |> range(start: -6h)
+          |> filter(fn: (r) => r._measurement == "reading")
+          |> filter(fn: (r) => r._field == "temp_c")
+
+     You get a live temperature graph. Click "Apply".
+
+9.4  Repeat "Add visualization" for hum_pct, lux, sound_peak_db -
+     change the last filter line each time. Arrange the panels, Save
+     the dashboard.
+
+CHECK 9:  A Grafana dashboard shows temperature/humidity/lux/sound
+          updating every few seconds.
+
+  >>> At this point Stage 2 and the core of Stage 3-4 are DONE. <<<
+      The rest is the parts that make it a real study, not a demo.
+
+
+======================================================================
+PART 10 - OCCUPANCY INPUT  (Stage 3, second data stream)
+======================================================================
+
+The readings only make sense against how full the room is. You want a
+bucket: Unoccupied / Low / Medium / High - never an exact headcount
+(privacy).
+
+Simplest version to start:
+  - In Node-RED add an "inject" node set to a string ("Low", "Medium",
+    ...) and a second "influxdb out" writing measurement "occupancy".
+    You manually inject the current level during a lesson.
+  - Later, replace the manual inject with a real source (a PIR-based
+    counter, a door sensor, timetable data) publishing to
+    classroom/<room>/occupancy.
+
+In Grafana, add the occupancy series as a second query on a panel, or
+use it to split the sensor panels (group by occupancy level) so you
+can compare "quiet room" vs "full room" conditions.
+
+
+======================================================================
+PART 11 - THE HUMAN FEEDBACK CHANNEL  (Stage 5)
+======================================================================
+
+Runs beside the sensors, not through them.
+
+11.1  Make an anonymous form (Google Forms / Microsoft Forms):
+        - "How comfortable is the room right now?" (1-5)
+        - "Too hot / too cold / about right"
+        - "Too bright / too dark / about right"
+        - "Too noisy / about right"
+        - "Is this monitor useful?" (yes/no + comment)
+      No names, no email collection.
+
+11.2  Collect responses to a spreadsheet. In the offline analysis
+      stage you join these against the sensor data by timestamp and
+      room, and check where the numbers and the perception agree or
+      diverge (e.g. 24 C but people say "too cold").
+
+
+======================================================================
+PART 12 - OFFLINE ANALYSIS  (Stage 4, the report)
+======================================================================
+
+Export from InfluxDB (Data Explorer > CSV) or query it from a Python /
+R notebook. Planned analyses:
+  - descriptive stats per variable, per occupancy bucket
+  - time-series: daily/weekly patterns, does a full room heat up
+  - threshold-exceedance counts (how often over the noise limit, etc.)
+  - before/after: pick an intervention (open a window on a schedule,
+    change a light setting), compare the periods
+  - sensor vs feedback: correlation / agreement between measured
+    conditions and perceived comfort
+
+
+======================================================================
+TROUBLESHOOTING
+======================================================================
+
+ESP32 says "MQTT: ... failed, rc=-2"  (can't reach broker)
+  - Wrong MQTT_HOST. Re-check <PC_IP> with ipconfig.
+  - PC firewall blocking port 1883. Allow it:
+      PowerShell (as Admin):
+      New-NetFirewallRule -DisplayName "MQTT 1883" -Direction Inbound `
+        -Protocol TCP -LocalPort 1883 -Action Allow
+  - ESP32 and PC on different networks (guest Wi-Fi). Same SSID.
+  - "docker compose ps" - is mosquitto actually Up?
+
+ESP32 "rc=-4" or "rc=-2" intermittently
+  - Broker up but slow / name clash. Usually harmless; it retries.
+
+MQTTX connects but no messages
+  - Wrong topic filter. Use exactly:  classroom/#
+  - ESP32 Serial shows MQTT connected? If not, fix that first.
+
+"time NOT synced" never clears
+  - No internet on the PC/router, or UDP 123 blocked. NTP needs
+    outbound UDP. Data still flows; ts stays 0 and ts_valid false.
+
+Node-RED mqtt node stuck "connecting"
+  - Server host must be  mosquitto  (the container name), NOT
+    localhost, because Node-RED runs inside Docker. Port 1883.
+
+InfluxDB node error "unauthorized"
+  - Wrong token, or org/bucket name mismatch. Must be exactly
+    classroom / sensors and the token from Part 6.
+
+Grafana "datasource is working" but panels empty
+  - range too short, or field name typo. Confirm data in InfluxDB
+    Data Explorer first (Part 8).
+
+Everything was working, now nothing after a reboot
+  - Start Docker Desktop, then:  cd "D:\Suvin's Project"; docker compose up -d
+  - Re-flash / power-cycle the ESP32.
+
+Ports already in use (1880/8086/3000/1883)
+  - Something else is using them. Stop it, or edit the left-hand port
+    numbers in docker-compose.yml (e.g. "3001:3000") and use the new
+    number in the browser.
