@@ -224,8 +224,8 @@ PART 6 - INFLUXDB: MAKE A PLACE TO STORE DATA
 ======================================================================
 
 6.1  Open http://localhost:8086. First-time setup screen:
-        Username:      you pick
-        Password:      you pick (>= 8 chars)
+        Username:      suvin_RS
+        Password:      suvincrproject
         Organization:  classroom
         Bucket:        sensors
       Click Continue / Save.
@@ -236,6 +236,8 @@ PART 6 - INFLUXDB: MAKE A PLACE TO STORE DATA
         "node-red" > Save.
       COPY the token string now - you cannot see it again later.
       Paste it somewhere safe.
+
+APITOKENS:DRPVRH2J8aCVB03BCFGuVjh0jQd6sZeKmg7Lza2VSRuOZeTSZ0Q3Mtw7wPAu8oxaoMGSUzmoagxVfF-M6Mg4vA==
 
 CHECK 6:  You have: org = classroom, bucket = sensors, and a copied
           API token.

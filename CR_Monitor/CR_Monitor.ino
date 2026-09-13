@@ -9,6 +9,8 @@
  #include <Wire.h>
  #include <WiFi.h>
  #include <time.h>
+ #include "secrets.h"      // untracked credentials
+ #include <esp_mac.h>
  #include <PubSubClient.h>
  #include <Adafruit_SHT31.h>
  #include <BH1750.h>
@@ -23,8 +25,7 @@
  #define BH1750_ADDR  0x23  // 0x5C if ADDR pin high
 
  // ============================ WI-FI ===========================
- const char* WIFI_SSID     = "YOUR_WIFI_SSID";
- const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+ // SSID and password live in secrets.h - see secrets.example.h
 
  const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
  const unsigned long WIFI_RETRY_DELAY_MS     = 5000;
@@ -33,8 +34,7 @@
  // Topics: classroom/<room>/<node>/{telemetry,status,alert}
  const char*    MQTT_HOST      = "192.168.1.5";   // <-- broker LAN IP
  const uint16_t MQTT_PORT      = 1883;
- const char*    MQTT_USER      = "";               // "" = anonymous
- const char*    MQTT_PASS      = "";
+ // MQTT_USER / MQTT_PASS live in secrets.h
  const char*    ROOM_ID        = "room-101";       // <-- set per room
 
  const unsigned long MQTT_RECONNECT_MS = 5000;
@@ -44,6 +44,11 @@
  const char*  NTP_SERVER     = "pool.ntp.org";
  const long   GMT_OFFSET_SEC = 0;                  // store UTC
  const int    DST_OFFSET_SEC = 0;
+ // Telemetry stays in UTC (GMT_OFFSET_SEC above) so stored data is
+ // unambiguous across sites. This offset is applied to the PANEL CLOCK
+ // only - changing GMT_OFFSET_SEC instead would silently retimestamp
+ // every MQTT message.
+ const long   DISPLAY_TZ_OFFSET_SEC = 8 * 3600;   // UTC+8, panel clock only
  const time_t TIME_VALID_MIN = 1700000000;         // clock is synced if past this
 
  // ============================ THRESHOLDS ======================
@@ -327,6 +332,14 @@
    Serial.println(F("+------------------------------+"));
  }
 
+ // Screen version of the block above. Included here, not at the top of the
+ // file, because it reads globals declared further up (soundMaxDb, mqtt,
+ // seq, alertTemp/Light/Sound).
+ #include "TFT_Panel.h"
+
+ // Boot self-test. After TFT_Panel.h so it can read the panel back.
+ #include "Preflight.h"
+
  // ============================ WI-FI STATE MACHINE =============
  // SCAN -> CONNECTING -> CONNECTED, falling back to WAIT_RETRY on any
  // failure or link drop. Sensors and buzzer run regardless of network.
@@ -398,8 +411,12 @@
  // Runs downstream of Wi-Fi; never blocks more than the socket timeout.
 
  void mqttInit() {
+   // Read the MAC from eFuse, not from the Wi-Fi driver. WiFi.macAddress()
+   // returns all zeros until the driver has actually started, which gave
+   // every node the id "000000" - a shared MQTT client id makes brokers
+   // disconnect each node as the next one connects.
    uint8_t mac[6];
-   WiFi.macAddress(mac);
+   esp_read_mac(mac, ESP_MAC_WIFI_STA);
    char id[7];
    snprintf(id, sizeof(id), "%02x%02x%02x", mac[3], mac[4], mac[5]);
    nodeId = id;
@@ -505,20 +522,29 @@
    delay(800);
    Serial.println();
    Serial.println(F("Classroom Environment Monitor - Stage 2"));
+   Serial.flush();   // if this line never appears, the hang is before setup()
 
    pinMode(BUZZER_PIN, OUTPUT);
    noTone(BUZZER_PIN);
 
    analogReadResolution(12);
    analogSetPinAttenuation(MIC_PIN, ADC_11db);   // full 0-3.3V range
+   // Touch shares LCD_RS/LCD_CS and is read on ADC1; same range as the mic.
+   analogSetPinAttenuation(TFT_DC, ADC_11db);
+   analogSetPinAttenuation(TFT_CS, ADC_11db);
+
+   // Self-test before anything is brought up. Brings Wire up as a side
+   // effect, so the sensor begin() calls below can use it directly.
+   preflightBus();
+
+   tftBegin();
+   preflightDisplay();
+   preflightSummary();
+   tftPreflight();        // same report on the TFT, then the dashboard
+
    calibrateMicBias();
    Serial.printf("Mic DC bias: %.0f counts (%.2f V)\n",
                  micBias, micBias * ADC_VREF / ADC_MAX);
-
-   Wire.begin(I2C_SDA, I2C_SCL);
-   Wire.setClock(100000);
-   delay(100);
-   i2cScan();
 
    if (sht3x.begin(SHT3X_ADDR)) {
      shtReady = true;
@@ -594,6 +620,7 @@
 
    bool wifiUp = (wifiState == WIFI_ST_CONNECTED);
    printPanel(tempOk, temp, hum, luxOk, lux, wifiUp);
+   drawPanel (tempOk, temp, hum, luxOk, lux, wifiUp);
 
    // Serial CSV
    Serial.print(millis());                  Serial.print(',');

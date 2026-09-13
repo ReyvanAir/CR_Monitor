@@ -26,3 +26,6 @@ mosquitto-data/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Local backups of superseded files
+*.bak
