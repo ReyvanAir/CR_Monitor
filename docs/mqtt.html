@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MQTT Contract</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="Topic tree, telemetry payload schema, retained status and alert state for the monitor node.">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <div class="rail-id">
+      <b>Classroom Environment Monitor</b>
+      <span>ESP32-S3 &middot; rev 2026-09-13</span>
+    </div>
+    <nav>
+      <a href="index.html">Overview</a>
+      <a href="hardware.html">Pins &amp; wiring</a>
+      <a href="firmware.html">Firmware</a>
+      <a href="mqtt.html" aria-current="page">MQTT contract</a>
+      <a href="setup.html">Build &amp; bring-up</a>
+    </nav>
+    <div class="rail-sub">
+      <p>On this page</p>
+      <a href="#tree">Topic tree</a>
+      <a href="#identity">Node identity</a>
+      <a href="#connection">Connection</a>
+      <a href="#telemetry">Telemetry payload</a>
+      <a href="#status">Status and last will</a>
+      <a href="#alert">Alert state</a>
+      <a href="#time">Time handling</a>
+      <a href="#subscribing">Subscribing</a>
+      <a href="#broker">Broker config</a>
+    </div>
+  </aside>
+
+  <main class="page">
+
+    <p class="crumb">MQTT contract</p>
+    <h1>Three topics, one direction</h1>
+
+    <p class="lede">
+      The node publishes and never subscribes. There is no command topic, no remote
+      configuration and no code path that acts on an incoming message. Everything the node will
+      ever say fits in three topics, and this page is the contract for all of them.
+    </p>
+
+    <div class="kv">
+      <div><b>Broker</b><span>1883</span></div>
+      <div><b>QoS</b><span>0</span></div>
+      <div><b>Keepalive</b><span>30 s</span></div>
+      <div><b>Publish rate</b><span>0.5 Hz</span></div>
+      <div><b>Buffer</b><span>512 B</span></div>
+    </div>
+
+    <h2 id="tree">Topic tree</h2>
+
+    <pre><code>classroom/&lt;room&gt;/&lt;node&gt;/telemetry   every 2 s, not retained
+classroom/&lt;room&gt;/&lt;node&gt;/status      on change,  <span class="k">retained</span>
+classroom/&lt;room&gt;/&lt;node&gt;/alert       on change,  <span class="k">retained</span></code></pre>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Segment</th><th>Source</th><th>Example</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">classroom</td><td>Fixed prefix</td><td class="mono">classroom</td><td class="wide">Namespaces this project on a shared broker.</td></tr>
+          <tr><td class="mono">&lt;room&gt;</td><td><code>ROOM_ID</code> in the sketch</td><td class="mono">room-101</td><td class="wide">Set per room at flash time. The one value you must change per install.</td></tr>
+          <tr><td class="mono">&lt;node&gt;</td><td>Derived from the chip MAC</td><td class="mono">a41f9c</td><td class="wide">Six hex digits, assigned automatically. Never set by hand.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="identity">Node identity</h2>
+
+    <p>
+      The node id is the last three bytes of the Wi-Fi station MAC, read straight from eFuse
+      with <code>esp_read_mac()</code>. It is also used verbatim as the MQTT client id.
+    </p>
+
+    <pre><code>uint8_t mac[6];
+esp_read_mac(mac, ESP_MAC_WIFI_STA);
+snprintf(id, <span class="k">sizeof</span>(id), <span class="s">"%02x%02x%02x"</span>, mac[3], mac[4], mac[5]);</code></pre>
+
+    <div class="note alert">
+      <h4>Why not WiFi.macAddress()</h4>
+      <p>
+        Because it returns all zeros until the Wi-Fi driver has actually started. Reading it
+        during <code>mqttInit()</code> gave every node the id <code>000000</code>, and a shared
+        client id makes a broker disconnect each node as the next one connects. The symptom was
+        nodes that worked perfectly alone and knocked each other offline in pairs. Reading eFuse
+        directly does not depend on driver state and cannot fail this way.
+      </p>
+    </div>
+
+    <h2 id="connection">Connection</h2>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Parameter</th><th>Value</th><th>Reasoning</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">MQTT_HOST</td><td class="mono">192.168.1.5</td><td class="wide">The broker's LAN address. An IP rather than a hostname, so the node needs no working DNS.</td></tr>
+          <tr><td class="mono">MQTT_PORT</td><td class="mono">1883</td><td class="wide">Plain MQTT. No TLS on this build.</td></tr>
+          <tr><td class="mono">keepAlive</td><td class="mono">30 s</td><td class="wide">Sets how fast a dead node is noticed. The last will fires once this lapses.</td></tr>
+          <tr><td class="mono">socketTimeout</td><td class="mono">3 s</td><td class="wide">Caps how long a publish can stall the loop. Kept short so the buzzer stays responsive.</td></tr>
+          <tr><td class="mono">bufferSize</td><td class="mono">512 B</td><td class="wide">The default 256 truncates the telemetry payload, which builds up to 320 bytes.</td></tr>
+          <tr><td class="mono">reconnect</td><td class="mono">5 s</td><td class="wide">Minimum gap between connection attempts, so an unreachable broker is not retried in a tight loop.</td></tr>
+          <tr><td class="mono">QoS</td><td class="mono">0</td><td class="wide">At most once. A dropped sample is replaced two seconds later; delivery guarantees are not worth the round trips.</td></tr>
+          <tr><td class="mono">credentials</td><td class="mono">optional</td><td class="wide">Empty strings in <code>secrets.h</code> connect anonymously; non-empty values are passed through.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="telemetry">Telemetry payload</h2>
+
+    <p>
+      One JSON object every two seconds, not retained. Retaining it would mean a late subscriber
+      gets a stale reading presented as current, which is worse than getting nothing.
+    </p>
+
+    <pre><code>{
+  <span class="s">"ts"</span>: 1789412204,
+  <span class="s">"ts_valid"</span>: true,
+  <span class="s">"uptime_ms"</span>: 41284,
+  <span class="s">"seq"</span>: 20,
+  <span class="s">"temp_c"</span>: 23.71,
+  <span class="s">"hum_pct"</span>: 58.20,
+  <span class="s">"lux"</span>: 412.5,
+  <span class="s">"sound_avg_db"</span>: 44.3,
+  <span class="s">"sound_peak_db"</span>: 51.8,
+  <span class="s">"sound_calibrated"</span>: true,
+  <span class="s">"alerts"</span>: <span class="s">"---"</span>,
+  <span class="s">"rssi"</span>: -58
+}</code></pre>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Unit</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">ts</td><td class="mono">integer</td><td class="mono">s</td><td class="wide">Unix seconds, UTC. Zero when the clock has not synced.</td></tr>
+          <tr><td class="mono">ts_valid</td><td class="mono">boolean</td><td></td><td class="wide">False means ignore <code>ts</code> and use arrival time instead.</td></tr>
+          <tr><td class="mono">uptime_ms</td><td class="mono">integer</td><td class="mono">ms</td><td class="wide">Milliseconds since boot. Usable as a monotonic axis when <code>ts</code> is not.</td></tr>
+          <tr><td class="mono">seq</td><td class="mono">integer</td><td></td><td class="wide">Increments per publish, resets on reboot. A gap means lost messages, a reset means the node restarted.</td></tr>
+          <tr><td class="mono">temp_c</td><td class="mono">float | null</td><td class="mono">&deg;C</td><td class="wide">Two decimals. Null when the SHT3x read failed.</td></tr>
+          <tr><td class="mono">hum_pct</td><td class="mono">float | null</td><td class="mono">%</td><td class="wide">Two decimals. Null and non-null together with <code>temp_c</code>.</td></tr>
+          <tr><td class="mono">lux</td><td class="mono">float | null</td><td class="mono">lx</td><td class="wide">One decimal. Null when the BH1750 read failed.</td></tr>
+          <tr><td class="mono">sound_avg_db</td><td class="mono">float</td><td class="mono">dB</td><td class="wide">Mean across the ten sub-windows. Relative, not dB(A).</td></tr>
+          <tr><td class="mono">sound_peak_db</td><td class="mono">float</td><td class="mono">dB</td><td class="wide">Loudest sub-window. This is what the alarm tests.</td></tr>
+          <tr><td class="mono">sound_calibrated</td><td class="mono">boolean</td><td></td><td class="wide">False means <code>MIC_CAL_DB</code> is unset and both dB figures are tens of dB high.</td></tr>
+          <tr><td class="mono">alerts</td><td class="mono">string</td><td></td><td class="wide">Exactly three characters, positional: temperature, light, sound. Each is its letter or a dash.</td></tr>
+          <tr><td class="mono">rssi</td><td class="mono">integer</td><td class="mono">dBm</td><td class="wide">Wi-Fi signal strength at publish time.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <h4>Failed readings are null, never zero and never NaN</h4>
+      <p>
+        JSON has no NaN literal, and zero is a plausible temperature. A helper writes the
+        literal <code>null</code> whenever a sensor read failed, so a consumer can tell "the
+        room is at 0 &deg;C" from "we do not know". Check for null before arithmetic; the
+        Node-RED validate function does exactly this.
+      </p>
+    </div>
+
+    <h3>The alerts string</h3>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Value</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">---</td><td>Nothing raised.</td></tr>
+          <tr><td class="mono">T--</td><td>Temperature outside its band.</td></tr>
+          <tr><td class="mono">-L-</td><td>Light outside its band.</td></tr>
+          <tr><td class="mono">--S</td><td>Sound peak over the limit.</td></tr>
+          <tr><td class="mono">T-S</td><td>Temperature and sound together.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="status">Status and last will</h2>
+
+    <p>
+      A retained topic carrying one of two literal strings. This is how a dashboard distinguishes
+      a quiet room from a dead node, which is a distinction the telemetry stream cannot make on
+      its own: both look like an absence of messages.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Payload</th><th>Published by</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">online</td><td>The node</td><td class="wide">Immediately after a successful connect.</td></tr>
+          <tr><td class="mono">offline</td><td>The broker</td><td class="wide">Automatically, once the keepalive lapses without contact.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The second row is the important one. <code>offline</code> is registered as the connection's
+      Last Will at connect time, so the broker publishes it on the node's behalf when the node is
+      no longer in a position to publish anything. A node that loses power, loses Wi-Fi or
+      crashes still reports its own absence.
+    </p>
+
+    <pre><code>mqtt.connect(nodeId, user, pass,
+             topicStatus, <span class="c">/* willQos */</span> 0, <span class="c">/* willRetain */</span> <span class="k">true</span>, <span class="s">"offline"</span>);</code></pre>
+
+    <p>
+      Retained means a subscriber connecting later still receives the current state immediately
+      rather than waiting for the next change, which for a healthy node might never come.
+    </p>
+
+    <h2 id="alert">Alert state</h2>
+
+    <p>
+      Retained JSON, published only when the combined alert state changes rather than on every
+      sample.
+    </p>
+
+    <pre><code>{<span class="s">"temp"</span>: false, <span class="s">"light"</span>: true, <span class="s">"sound"</span>: false}</code></pre>
+
+    <p>
+      Internally the three flags are packed into a bitmask and compared against the last one
+      published; identical masks publish nothing. The mask is reset on every reconnect, which
+      forces a fresh publish so the retained value cannot be left describing a state from before
+      a network drop.
+    </p>
+
+    <p>
+      This duplicates information already in the telemetry <code>alerts</code> string, and that
+      is intended. A subscriber that only cares about alarms can subscribe to one low-traffic
+      retained topic instead of parsing a message every two seconds.
+    </p>
+
+    <h2 id="time">Time handling</h2>
+
+    <p>
+      Telemetry timestamps are UTC. The panel clock is not. These are two different settings and
+      confusing them silently re-timestamps every message the node has ever sent.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Constant</th><th>Value</th><th>Affects</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">GMT_OFFSET_SEC</td><td class="mono">0</td><td class="wide">The system clock, and therefore every <code>ts</code> in the telemetry stream. Leave at zero so stored data is unambiguous across sites.</td></tr>
+          <tr><td class="mono">DST_OFFSET_SEC</td><td class="mono">0</td><td class="wide">Also the system clock. Also leave alone.</td></tr>
+          <tr><td class="mono">DISPLAY_TZ_OFFSET_SEC</td><td class="mono">8 &times; 3600</td><td class="wide">The panel clock only. This is the one to change for a local time display.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Validity is decided by a single test: any clock reading past <code>1700000000</code>, which
+      is late 2023, is treated as synced. An ESP32 with no NTP answer starts counting from
+      1970, so the comparison separates a real time from an uninitialised one without needing
+      to track whether NTP replied.
+    </p>
+
+    <h2 id="subscribing">Subscribing</h2>
+
+    <p>
+      Node-RED takes all telemetry from all rooms and all nodes with one wildcard subscription,
+      then splits the topic to recover the room and node ids as message properties.
+    </p>
+
+    <pre><code>classroom/+/+/telemetry     <span class="c">// every node, every room</span>
+classroom/room-101/+/#      <span class="c">// one room, all three topics</span>
+classroom/+/+/status        <span class="c">// liveness across the whole estate</span></code></pre>
+
+    <pre><code><span class="k">const</span> parts = msg.topic.split(<span class="s">'/'</span>);
+msg.room = parts[1];
+msg.node = parts[2];</code></pre>
+
+    <p>
+      Because room and node live in the topic and not the payload, they cost nothing to publish
+      and cannot drift out of sync with where a message actually came from.
+    </p>
+
+    <h2 id="broker">Broker config</h2>
+
+    <p>
+      Mosquitto 2, configured in eleven lines. Persistence is on so queued state survives a
+      restart, and logging goes to stdout so <code>docker compose logs</code> shows activity.
+    </p>
+
+    <pre><code>listener 1883
+allow_anonymous true
+
+persistence true
+persistence_location /mosquitto/data/
+
+log_dest stdout
+log_type notice</code></pre>
+
+    <div class="note alert">
+      <h4>allow_anonymous true is a bench setting</h4>
+      <p>
+        Any device on the LAN can currently publish to any topic in this tree, including
+        plausible-looking fake telemetry, and can read everything the nodes send. That is
+        acceptable on an isolated bench network and nowhere else. Before this runs in a real
+        building it needs a password file, per-node credentials, and topic ACLs restricting each
+        node to its own subtree.
+      </p>
+    </div>
+
+    <div class="next">
+      <a href="setup.html#nodered"><b>Node-RED flow</b><span>Where the stream is validated and stored</span></a>
+      <a href="firmware.html#loop"><b>Publish timing</b><span>Where in the loop these messages are sent</span></a>
+    </div>
+
+    <p class="foot">Classroom Environment Monitor &middot; MQTT contract for the 2026-09-13 revision</p>
+
+  </main>
+</div>
+</body>
+</html>

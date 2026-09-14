@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Classroom Environment Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="ESP32-S3 classroom environmental monitor: architecture, sensors, and the MQTT to Grafana data path.">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <div class="rail-id">
+      <b>Classroom Environment Monitor</b>
+      <span>ESP32-S3 &middot; rev 2026-09-13</span>
+    </div>
+    <nav>
+      <a href="index.html" aria-current="page">Overview</a>
+      <a href="hardware.html">Pins &amp; wiring</a>
+      <a href="firmware.html">Firmware</a>
+      <a href="mqtt.html">MQTT contract</a>
+      <a href="setup.html">Build &amp; bring-up</a>
+    </nav>
+    <div class="rail-sub">
+      <p>On this page</p>
+      <a href="#what">What it measures</a>
+      <a href="#path">Data path</a>
+      <a href="#stages">Project stages</a>
+      <a href="#commitments">Design commitments</a>
+      <a href="#layout">Repository layout</a>
+      <a href="#limits">Known limits</a>
+    </div>
+  </aside>
+
+  <main class="page">
+
+    <p class="crumb">Overview</p>
+    <h1>A classroom that can tell you what it feels like</h1>
+
+    <p class="lede">
+      An ESP32-S3 node measures temperature, humidity, illuminance and sound level in a
+      teaching room, then publishes them as JSON over MQTT every two seconds. A local
+      Docker stack validates, stores and charts the stream. The point is to replace
+      "it feels stuffy in here" with a number somebody can act on.
+    </p>
+
+    <div class="kv">
+      <div><b>Node</b><span>ESP32-S3 N16R8</span></div>
+      <div><b>Sample period</b><span>2 s</span></div>
+      <div><b>Transport</b><span>MQTT 1883</span></div>
+      <div><b>Display</b><span>3.5&Prime; 480&times;320</span></div>
+      <div><b>Firmware</b><span>641 lines</span></div>
+    </div>
+
+    <h2 id="what">What it measures</h2>
+
+    <p>
+      Four quantities, three sensors. Each has a threshold band; leaving the band raises a
+      local alarm on the buzzer and the panel, and flags the reading in the telemetry payload.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>Quantity</th><th>Sensor</th><th>Bus / pin</th><th>Units</th><th>Alarm band</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Temperature</td><td class="mono">SHT3x</td>
+            <td class="mono">I&sup2;C 0x44</td><td class="mono">&deg;C</td>
+            <td class="mono">18.0 to 30.0</td>
+          </tr>
+          <tr>
+            <td>Relative humidity</td><td class="mono">SHT3x</td>
+            <td class="mono">I&sup2;C 0x44</td><td class="mono">%</td>
+            <td class="mono">reported only</td>
+          </tr>
+          <tr>
+            <td>Illuminance</td><td class="mono">BH1750</td>
+            <td class="mono">I&sup2;C 0x23</td><td class="mono">lx</td>
+            <td class="mono">300 to 800</td>
+          </tr>
+          <tr>
+            <td>Sound level</td><td class="mono">MAX4466</td>
+            <td class="mono">GPIO5 (ADC1)</td><td class="mono">dB rel.</td>
+            <td class="mono">peak &le; 70</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note warn">
+      <h4>Thresholds are placeholders</h4>
+      <p>
+        The five limits above were chosen to make the alarm path testable, not because a
+        standard says so. Before this collects data anyone will cite, each one needs to be
+        justified against a real source and the value here changed to match.
+      </p>
+    </div>
+
+    <h2 id="path">Data path</h2>
+
+    <p>
+      Two paths leave the node, and only one of them needs a network. That split is
+      deliberate: a room that is too hot should beep whether or not the school Wi-Fi is up.
+    </p>
+
+    <figure>
+      <div class="fig-wrap">
+        <svg viewBox="0 0 900 202" role="img" aria-label="Data flows from the ESP32-S3 node to Mosquitto, Node-RED, InfluxDB and Grafana. A second local path from the node drives the buzzer and TFT panel without a network.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--label)"></path>
+            </marker>
+          </defs>
+
+          <!-- network path -->
+          <g>
+            <rect x="8"   y="46" width="156" height="54" rx="4" fill="var(--surface-2)" stroke="var(--info)" stroke-width="1.5"></rect>
+            <text x="86"  y="70" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="14" font-weight="600" fill="var(--text)">ESP32-S3 node</text>
+            <text x="86"  y="87" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--label)">3 sensors, 2 s</text>
+
+            <rect x="204" y="46" width="136" height="54" rx="4" fill="var(--surface-2)" stroke="var(--edge)"></rect>
+            <text x="272" y="70" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="14" font-weight="600" fill="var(--text)">Mosquitto</text>
+            <text x="272" y="87" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--label)">broker :1883</text>
+
+            <rect x="380" y="46" width="136" height="54" rx="4" fill="var(--surface-2)" stroke="var(--edge)"></rect>
+            <text x="448" y="70" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="14" font-weight="600" fill="var(--text)">Node-RED</text>
+            <text x="448" y="87" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--label)">validate :1880</text>
+
+            <rect x="556" y="46" width="126" height="54" rx="4" fill="var(--surface-2)" stroke="var(--edge)"></rect>
+            <text x="619" y="70" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="14" font-weight="600" fill="var(--text)">InfluxDB</text>
+            <text x="619" y="87" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--label)">bucket sensors</text>
+
+            <rect x="722" y="46" width="170" height="54" rx="4" fill="var(--surface-2)" stroke="var(--edge)"></rect>
+            <text x="807" y="70" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="14" font-weight="600" fill="var(--text)">Grafana</text>
+            <text x="807" y="87" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--label)">dashboard :3000</text>
+
+            <line x1="166" y1="73" x2="198" y2="73" stroke="var(--label)" stroke-width="1.3" marker-end="url(#ar)"></line>
+            <line x1="342" y1="73" x2="374" y2="73" stroke="var(--label)" stroke-width="1.3" marker-end="url(#ar)"></line>
+            <line x1="518" y1="73" x2="550" y2="73" stroke="var(--label)" stroke-width="1.3" marker-end="url(#ar)"></line>
+            <line x1="684" y1="73" x2="716" y2="73" stroke="var(--label)" stroke-width="1.3" marker-end="url(#ar)"></line>
+
+            <text x="182" y="38" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">JSON</text>
+            <text x="358" y="38" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">subscribe</text>
+            <text x="534" y="38" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">write</text>
+            <text x="700" y="38" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">Flux</text>
+          </g>
+
+          <!-- local path -->
+          <g>
+            <path d="M 86 100 L 86 138" stroke="var(--ok)" stroke-width="1.3" fill="none" marker-end="url(#ar)"></path>
+            <rect x="8" y="140" width="200" height="48" rx="4" fill="var(--ok-wash)" stroke="var(--ok)" stroke-width="1.2"></rect>
+            <text x="108" y="162" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="13.5" font-weight="600" fill="var(--text)">Buzzer + TFT panel</text>
+            <text x="108" y="178" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--label)">GPIO7 &middot; 8-bit parallel</text>
+            <text x="224" y="160" font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="var(--text-soft)">Local alarm and readout. No broker,</text>
+            <text x="224" y="177" font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="var(--text-soft)">no Wi-Fi, no dependency on the LAN.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Two independent outputs.</b> Everything above the fold needs the network. Everything
+        below it keeps working when the network is gone, which is the condition under which a
+        classroom alarm actually matters.
+      </figcaption>
+    </figure>
+
+    <h2 id="stages">Project stages</h2>
+
+    <p>
+      The build runs in five stages. They are sequential because each one depends on the last
+      producing trustworthy output: there is no point storing readings you have not yet
+      confirmed are real.
+    </p>
+
+    <ol class="steps">
+      <li class="step">
+        <h3>Simulation <span class="pill pass">DONE</span></h3>
+        <p>
+          Wokwi layout in <code>diagram.json</code>. Sensor logic and thresholds proved out
+          before any hardware was wired, so early bugs were logic bugs rather than
+          soldering bugs.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Real hardware and MQTT <span class="pill pass">DONE</span></h3>
+        <p>
+          The physical node: three sensors on real buses, a boot self-test, the TFT dashboard,
+          the buzzer, and JSON telemetry published to a broker. This is what
+          <code>CR_Monitor.ino</code> is.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Storage and dashboard <span class="pill warn">CORE RUNNING</span></h3>
+        <p>
+          The Docker stack: Mosquitto, Node-RED, InfluxDB, Grafana. The sensor stream is
+          landing and charting. The second stream planned for this stage, an occupancy
+          bucket entered per lesson, is not wired up yet.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Offline analysis <span class="pill skip">NOT STARTED</span></h3>
+        <p>
+          Export the stored series and write it up: conditions against occupancy, time of day
+          and the comfort responses from stage 5.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Human feedback <span class="pill skip">NOT STARTED</span></h3>
+        <p>
+          An anonymous form asking how the room actually feels, running beside the sensors
+          rather than through them. Sensor data says the room is 29 &deg;C; only a person can
+          say whether that stopped them concentrating.
+        </p>
+      </li>
+    </ol>
+
+    <h2 id="commitments">Design commitments</h2>
+
+    <p>
+      Four decisions shape most of the code. They are worth knowing before reading it, because
+      several things that look like omissions are these choices being enforced.
+    </p>
+
+    <h3>Sound is a level, never a recording</h3>
+    <p>
+      The microphone path computes a decibel figure and throws the samples away. No audio is
+      buffered, stored or transmitted, and there is no code path that could do so. Occupancy,
+      when it arrives, is a bucket (Unoccupied, Low, Medium, High) rather than a headcount.
+      Both choices cost accuracy and are worth it: a monitor that records a classroom is a
+      monitor nobody consents to.
+    </p>
+
+    <h3>The node stays dumb</h3>
+    <p>
+      Firmware publishes. It does not subscribe, accept commands, or hold configuration that
+      can be changed remotely. Anything clever (unit conversion, range rejection, aggregation,
+      alerting policy) belongs in Node-RED where it can be changed without a reflash and
+      without physical access to a device mounted on a wall.
+    </p>
+
+    <h3>The local alarm does not depend on the LAN</h3>
+    <p>
+      Threshold evaluation, the buzzer and the panel all run from the sample loop, upstream of
+      any network state. Wi-Fi and MQTT are serviced in the same loop but nothing waits on
+      them. Pull the router out and the node keeps measuring, keeps displaying and keeps
+      beeping.
+    </p>
+
+    <h3>Alert rules exist twice, on purpose</h3>
+    <p>
+      The node decides when to beep. Node-RED separately decides when to raise a dashboard
+      alert. This is duplication, and the alternative is worse: a single rule in Node-RED means
+      the buzzer stops working the moment the broker does. Keep the two in sync by hand and
+      accept the cost.
+    </p>
+
+    <h2 id="layout">Repository layout</h2>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Path</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">CR_Monitor/CR_Monitor.ino</td><td class="wide">The sketch. Sensors, alarms, Wi-Fi, MQTT, serial output.</td></tr>
+          <tr><td class="mono">CR_Monitor/TFT_Panel.h</td><td class="wide">Dashboard rendering for the 480&times;320 panel, plus its colour table.</td></tr>
+          <tr><td class="mono">CR_Monitor/Preflight.h</td><td class="wide">Boot self-test: bus, sensors, microphone bias, display readback.</td></tr>
+          <tr><td class="mono">CR_Monitor/TFT_Setup_CR_Monitor.h</td><td class="wide">TFT_eSPI pin map. Versioned here, installed elsewhere. See <a href="setup.html#tft">bring-up</a>.</td></tr>
+          <tr><td class="mono">CR_Monitor/secrets.example.h</td><td class="wide">Credentials template. Copy to <code>secrets.h</code>, which is gitignored.</td></tr>
+          <tr><td class="mono">Test_*/</td><td class="wide">Five single-purpose bring-up sketches: I2C scan, rail voltage, SHT3x, BH1750, TFT.</td></tr>
+          <tr><td class="mono">CR_Monitor_NOTES.txt</td><td class="wide">Design rationale. The reasoning that used to live in code comments.</td></tr>
+          <tr><td class="mono">WIRING_TFT.md</td><td class="wide">Shield pin map and the regulator investigation.</td></tr>
+          <tr><td class="mono">docker-compose.yml</td><td class="wide">The four backend services and their named volumes.</td></tr>
+          <tr><td class="mono">mosquitto.conf</td><td class="wide">Broker config. Anonymous, LAN only.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="limits">Known limits</h2>
+
+    <p>Things a reader should not assume this system does.</p>
+
+    <ul>
+      <li>
+        <strong>The sound figure is relative, not certified.</strong> A MAX4466 is an electret
+        capsule and an amplifier with a gain trimpot, not a sound level meter. The number is
+        calibrated at two points and reproducible on this node; it is not dB(A) and should
+        never be reported as such.
+      </li>
+      <li>
+        <strong>The broker is open.</strong> <code>allow_anonymous true</code> is fine on a
+        bench and wrong anywhere else. Authentication is a prerequisite for real deployment,
+        not a nice-to-have.
+      </li>
+      <li>
+        <strong>Humidity has no alarm band.</strong> It is measured, published and charted, but
+        nothing raises on it, because no defensible limit was chosen.
+      </li>
+      <li>
+        <strong>One node, one room.</strong> The topic tree and the MAC-derived node id support
+        many nodes; none of the multi-node behaviour has been exercised.
+      </li>
+      <li>
+        <strong>The panel clock is local, the data is UTC.</strong> Deliberate, and easy to
+        break. See <a href="mqtt.html#time">time handling</a>.
+      </li>
+    </ul>
+
+    <div class="next">
+      <a href="hardware.html"><b>Pins &amp; wiring</b><span>Every connection, and why each pin is the one it is</span></a>
+      <a href="firmware.html"><b>Firmware</b><span>Boot order, the loop, sound maths, alarms</span></a>
+      <a href="mqtt.html"><b>MQTT contract</b><span>Topics, payload schema, retained state</span></a>
+      <a href="setup.html"><b>Build &amp; bring-up</b><span>From empty board to live dashboard</span></a>
+    </div>
+
+    <p class="foot">Classroom Environment Monitor &middot; documentation for the 2026-09-13 revision</p>
+
+  </main>
+</div>
+</body>
+</html>

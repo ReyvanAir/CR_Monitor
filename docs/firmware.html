@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Firmware Internals</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="Boot sequence, sampling loop, Wi-Fi state machine, sound measurement and alarm logic.">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <div class="rail-id">
+      <b>Classroom Environment Monitor</b>
+      <span>ESP32-S3 &middot; rev 2026-09-13</span>
+    </div>
+    <nav>
+      <a href="index.html">Overview</a>
+      <a href="hardware.html">Pins &amp; wiring</a>
+      <a href="firmware.html" aria-current="page">Firmware</a>
+      <a href="mqtt.html">MQTT contract</a>
+      <a href="setup.html">Build &amp; bring-up</a>
+    </nav>
+    <div class="rail-sub">
+      <p>On this page</p>
+      <a href="#files">File map</a>
+      <a href="#boot">Boot sequence</a>
+      <a href="#preflight">Self-test</a>
+      <a href="#loop">The loop</a>
+      <a href="#wifi">Wi-Fi state machine</a>
+      <a href="#sound">Sound measurement</a>
+      <a href="#calibration">Calibration</a>
+      <a href="#alarms">Alarms</a>
+      <a href="#panel">TFT dashboard</a>
+      <a href="#serial">Serial output</a>
+    </div>
+  </aside>
+
+  <main class="page">
+
+    <p class="crumb">Firmware</p>
+    <h1>What the node does between one reading and the next</h1>
+
+    <p class="lede">
+      641 lines of Arduino C++ across four files. No RTOS tasks, no interrupts, no
+      <code>delay()</code> in the running loop. Everything is cooperative: each service gets a
+      turn, does the smallest amount of work it can, and returns. That constraint is what keeps
+      a two second sample period honest while Wi-Fi is reconnecting.
+    </p>
+
+    <h2 id="files">File map</h2>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>File</th><th>Lines</th><th>Holds</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">CR_Monitor.ino</td><td class="mono">641</td><td class="wide">Pins, thresholds, sensor reads, alarm logic, Wi-Fi, MQTT, serial output, <code>setup()</code> and <code>loop()</code>.</td></tr>
+          <tr><td class="mono">TFT_Panel.h</td><td class="mono">310</td><td class="wide">The 480&times;320 dashboard: colour table, icons, card layout, <code>drawPanel()</code>.</td></tr>
+          <tr><td class="mono">Preflight.h</td><td class="mono">401</td><td class="wide">Boot self-test across the bus, the sensors, the microphone bias and the display.</td></tr>
+          <tr><td class="mono">TFT_Setup_CR_Monitor.h</td><td class="mono">78</td><td class="wide">TFT_eSPI pin map and driver selection. Versioned here, but the library reads it from its own folder.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <h4>The two headers are included from the middle of the sketch, not the top</h4>
+      <p>
+        <code>TFT_Panel.h</code> sits after the global declarations because it reads them
+        directly: <code>soundMaxDb</code>, <code>seq</code>, the <code>mqtt</code> client, the
+        three alert flags. <code>Preflight.h</code> comes after <code>TFT_Panel.h</code> so its
+        display check can call into the panel and read it back. Moving either to the top of the
+        file will not compile, and the ordering is the reason.
+      </p>
+    </div>
+
+    <h2 id="boot">Boot sequence</h2>
+
+    <p>
+      <code>setup()</code> runs in a fixed order, and the order matters more than it looks.
+      Hardware is proved before it is trusted, and the microphone is characterised before Wi-Fi
+      is allowed to start adding noise to the ADC.
+    </p>
+
+    <ol class="steps">
+      <li class="step">
+        <h3>Serial first, then flush</h3>
+        <p>
+          115200 baud, then a banner and an explicit <code>Serial.flush()</code>. If that
+          banner never appears, the hang is somewhere before <code>setup()</code> and nothing
+          below is worth debugging yet.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Buzzer silent, ADC configured</h3>
+        <p>
+          12 bit resolution, and 11 dB attenuation on three pins: the microphone, plus
+          <code>TFT_DC</code> and <code>TFT_CS</code>, because those double as touch
+          electrodes and get read as analogue inputs on the same range.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Bus self-test</h3>
+        <p>
+          <code>preflightBus()</code> checks the I&sup2;C lines and enumerates devices. It
+          brings <code>Wire</code> up as a side effect, which is why the sensor
+          <code>begin()</code> calls further down do not start it themselves.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Display up, then checked</h3>
+        <p>
+          <code>tftBegin()</code>, then <code>preflightDisplay()</code> reads the panel back to
+          confirm the bus actually works, then <code>preflightSummary()</code> on serial and
+          <code>tftPreflight()</code> puts the same report on the screen before handing over to
+          the dashboard.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Microphone DC bias</h3>
+        <p>
+          <code>calibrateMicBias()</code> averages 2000 samples at 200 &micro;s intervals, so
+          roughly 0.4 seconds, to find the amplifier's quiescent point. Keep the room quiet
+          during boot. Expect about 2048 counts, which is 1.65 V.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Sensors</h3>
+        <p>
+          SHT3x at <code>0x44</code> with its internal heater explicitly disabled, since the
+          heater adds self-heating error to the very reading you want. BH1750 in
+          <code>CONTINUOUS_HIGH_RES_MODE</code>. Either failing is logged and survivable; the
+          node runs with whatever answered.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Network, last</h3>
+        <p>
+          Station mode, disconnect, and the Wi-Fi state machine set to <code>SCAN</code>.
+          <code>mqttInit()</code> derives the node id and builds the topic strings.
+          <code>configTime()</code> points at <code>pool.ntp.org</code>. Nothing blocks; the
+          loop takes it from here.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Boot chirp and CSV header</h3>
+        <p>
+          Two beeps at 1500 Hz, which doubles as a buzzer self-test, the threshold summary,
+          then the CSV column header so a capture started at boot is parseable.
+        </p>
+      </li>
+    </ol>
+
+    <h2 id="preflight">Self-test</h2>
+
+    <p>
+      <code>Preflight.h</code> exists because the failure modes on this board are quiet ones. A
+      floating microphone pin does not read zero, it reads noise that looks like sound. A
+      display with no logic supply lights its backlight. Each check resolves to one of four
+      states.
+    </p>
+
+    <p>
+      <span class="pill pass">PASS</span>
+      <span class="pill warn">WARN</span>
+      <span class="pill fail">FAIL</span>
+      <span class="pill skip">SKIP</span>
+    </p>
+
+    <h3>Microphone bias categories</h3>
+
+    <p>
+      The bias reading is used as the cheapest voltmeter available on that rail. Where it lands
+      says what is wrong without any test equipment.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Counts</th><th>Category</th><th>Verdict</th><th>What it means</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">1800 to 2150</td><td class="mono">MIC_OK</td><td><span class="pill pass">PASS</span></td><td class="wide">Centred near VCC/2. Wired correctly and powered from 3.3 V.</td></tr>
+          <tr><td class="mono">1400 to 1700</td><td class="mono">MIC_PHANTOM</td><td><span class="pill fail">FAIL</span></td><td class="wide">The pin is being weakly pulled rather than driven. Usually a missing ground or a half-seated jumper.</td></tr>
+          <tr><td class="mono">below 1400</td><td class="mono">MIC_LOW</td><td><span class="pill fail">FAIL</span></td><td class="wide">Supply is too low or the output is loaded down.</td></tr>
+          <tr><td class="mono">below 100</td><td class="mono">MIC_DEAD</td><td><span class="pill fail">FAIL</span></td><td class="wide">Nothing is driving the pin at all.</td></tr>
+          <tr><td class="mono">anything else</td><td class="mono">MIC_ODD</td><td><span class="pill warn">WARN</span></td><td class="wide">Outside every known-good window. Worth a look before trusting the dB figure.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The checks also interact. If the microphone check fails and the I&sup2;C scan finds
+      nothing, the summary reports a likely supply or ground fault common to both, rather than
+      two unrelated faults, because that is nearly always what it is.
+    </p>
+
+    <h2 id="loop">The loop</h2>
+
+    <p>
+      <code>loop()</code> runs at two rates from a single pass. Three services run on every
+      iteration, thousands of times a second. The sampling block runs once every two seconds
+      and returns early the rest of the time.
+    </p>
+
+    <pre><code><span class="k">void</span> loop() {
+  serviceAlarm();                    <span class="c">// beeper state, non-blocking</span>
+  handleWifi();                      <span class="c">// one state transition at most</span>
+  mqttService();                     <span class="c">// reconnect or pump the socket</span>
+
+  <span class="k">if</span> (millis() - lastRead &lt; READ_INTERVAL_MS) <span class="k">return</span>;
+  lastRead = millis();
+
+  <span class="c">// ... read, evaluate, display, publish ...</span>
+}</code></pre>
+
+    <p>
+      That early return is the whole design. The buzzer pattern needs servicing every 150 ms to
+      sound right, and MQTT needs its socket pumped to stay connected, so neither can sit behind
+      a two second sensor cycle. Equally, the sensors have no reason to run faster.
+    </p>
+
+    <h3>Order inside the sampling block</h3>
+
+    <ol>
+      <li>Read temperature and humidity, tracking a failure counter.</li>
+      <li>Read illuminance, which returns <code>-1</code> on failure rather than throwing.</li>
+      <li>Read sound over a 100 ms window.</li>
+      <li>Evaluate alarms and publish the alert state if it changed.</li>
+      <li>Render the serial panel, then the TFT panel.</li>
+      <li>Emit the CSV line.</li>
+      <li>Publish telemetry, which is a no-op when the broker link is down.</li>
+    </ol>
+
+    <p>
+      Alarms are evaluated before anything touches the network, and the buzzer and display come
+      before publishing. If MQTT is slow, the room still gets told.
+    </p>
+
+    <h2 id="wifi">Wi-Fi state machine</h2>
+
+    <p>
+      Four states, one transition per loop iteration, no blocking calls. A failure anywhere
+      lands in <code>WAIT_RETRY</code>, which waits five seconds and starts over.
+    </p>
+
+    <figure>
+      <div class="fig-wrap">
+        <svg viewBox="0 0 720 222" role="img" aria-label="State machine: SCAN leads to CONNECTING when the SSID is found, CONNECTING leads to CONNECTED on success. Scan failure, connect timeout and link loss all lead to WAIT RETRY, which returns to SCAN after five seconds.">
+          <defs>
+            <marker id="w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--label)"></path>
+            </marker>
+          </defs>
+
+          <rect x="16"  y="30" width="150" height="52" rx="4" fill="var(--surface-2)" stroke="var(--edge)"></rect>
+          <text x="91"  y="55" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">SCAN</text>
+          <text x="91"  y="71" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">is the SSID there?</text>
+
+          <rect x="246" y="30" width="166" height="52" rx="4" fill="var(--surface-2)" stroke="var(--edge)"></rect>
+          <text x="329" y="55" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">CONNECTING</text>
+          <text x="329" y="71" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">15 s budget</text>
+
+          <rect x="492" y="30" width="158" height="52" rx="4" fill="var(--ok-wash)" stroke="var(--ok)" stroke-width="1.4"></rect>
+          <text x="571" y="55" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">CONNECTED</text>
+          <text x="571" y="71" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">MQTT may run</text>
+
+          <rect x="246" y="152" width="166" height="52" rx="4" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1.4"></rect>
+          <text x="329" y="177" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">WAIT_RETRY</text>
+          <text x="329" y="193" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">5 s hold</text>
+
+          <line x1="166" y1="56" x2="240" y2="56" stroke="var(--label)" stroke-width="1.3" marker-end="url(#w)"></line>
+          <text x="203" y="47" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">found</text>
+
+          <line x1="412" y1="56" x2="486" y2="56" stroke="var(--label)" stroke-width="1.3" marker-end="url(#w)"></line>
+          <text x="449" y="47" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">link up</text>
+
+          <path d="M 140 82 L 140 126 L 296 126 L 296 146" fill="none" stroke="var(--label)" stroke-width="1.2" marker-end="url(#w)"></path>
+          <text x="150" y="120" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">not in range</text>
+
+          <path d="M 329 82 L 329 146" fill="none" stroke="var(--label)" stroke-width="1.2" marker-end="url(#w)"></path>
+          <text x="337" y="118" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">timeout</text>
+
+          <path d="M 571 82 L 571 126 L 380 126 L 380 146" fill="none" stroke="var(--label)" stroke-width="1.2" marker-end="url(#w)"></path>
+          <text x="470" y="120" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--label)">link lost</text>
+
+          <path d="M 246 178 L 52 178 L 52 88" fill="none" stroke="var(--info)" stroke-width="1.2" marker-end="url(#w)"></path>
+          <text x="60" y="150" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--info)">after 5 s</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Scan before connect.</b> <code>WiFi.begin()</code> on an absent network sits there
+        failing slowly. A scan first turns "not in range" into a fast, explicit answer, which is
+        the common case when a node boots before the access point does.
+      </figcaption>
+    </figure>
+
+    <p>
+      MQTT is strictly downstream. <code>mqttService()</code> returns immediately unless the
+      state is <code>CONNECTED</code>, and reconnection attempts are rate limited to one every
+      five seconds so a dead broker does not turn into a tight retry loop.
+    </p>
+
+    <h2 id="sound">Sound measurement</h2>
+
+    <div class="note warn">
+      <h4>This is a relative level, not a sound level meter</h4>
+      <p>
+        The MAX4466 is an electret capsule and an amplifier with a manual gain trimpot.
+        Everything past its output voltage is assumption. Report the figure as a relative
+        acoustic level calibrated at two points, never as a certified dB(A) reading.
+      </p>
+    </div>
+
+    <p>The number is built in four steps.</p>
+
+    <ol>
+      <li>
+        <strong>Find the DC operating point at boot.</strong> <code>calibrateMicBias()</code>
+        averages 2000 quiet samples into <code>micBias</code>, around 2048 counts.
+      </li>
+      <li>
+        <strong>Sample for 100 ms in ten sub-windows.</strong> Each 10 ms sub-window computes
+        the RMS of <code>(sample - micBias)</code>, which is the AC component with the DC
+        offset removed.
+      </li>
+      <li>
+        <strong>Convert each sub-window to decibels</strong> and keep both the mean across
+        sub-windows (<code>soundAvgDb</code>) and the largest (<code>soundMaxDb</code>).
+      </li>
+      <li>
+        <strong>Reject rail glitches.</strong> The ESP32 ADC occasionally returns exactly 0 or
+        4095, and does so more often with Wi-Fi active. Those samples are dropped before the
+        RMS, because a single spike wrecks the whole window.
+      </li>
+    </ol>
+
+    <pre><code>dB = 20 &times; log10(Vrms / MIC_REF_V) + MIC_DB_OFFSET + MIC_CAL_DB
+
+MIC_REF_V     = 0.00631   <span class="c">// 6.31 mV/Pa, the bare electret</span>
+MIC_DB_OFFSET = 94.0      <span class="c">// 1 Pa reference</span>
+MIC_CAL_DB    = -77.0     <span class="c">// this unit, set 2026-08-28</span></code></pre>
+
+    <p>
+      Averaging and peak are both kept because they answer different questions. A steady
+      classroom hum and one slammed door can produce the same average; only the peak
+      distinguishes them, so the peak is what the alarm uses and both are published.
+    </p>
+
+    <h2 id="calibration">Calibration</h2>
+
+    <p>
+      <code>MIC_CAL_DB</code> is not optional. <code>MIC_REF_V</code> and
+      <code>MIC_DB_OFFSET</code> describe a bare electret capsule, but the module's trimpot
+      multiplies the signal by somewhere between 25 and 125 times, adding a fixed offset of
+      roughly 28 to 42 dB. Left at zero, a 40 dB room reads about 115 dB and the alarm never
+      stops.
+    </p>
+
+    <p>
+      The current value came from measuring a room at about 39 dB while the panel showed about
+      116 dB, giving 39 minus 116.
+    </p>
+
+    <h3>Setting it on a new unit</h3>
+
+    <ol class="steps">
+      <li class="step">
+        <h3>Zero it and flash</h3>
+        <p>Set <code>MIC_CAL_DB = 0</code>, flash, and let the room go quiet.</p>
+      </li>
+      <li class="step">
+        <h3>Read the panel</h3>
+        <p>Note the steady average figure from the status panel, not the peak.</p>
+      </li>
+      <li class="step">
+        <h3>Measure the room for real</h3>
+        <p>Use an SPL meter or a phone app. A quiet room is around 35 to 40 dB.</p>
+      </li>
+      <li class="step">
+        <h3>Subtract and reflash</h3>
+        <p>
+          <code>MIC_CAL_DB = real_dB - panel_dB</code>. Flash again and confirm the panel now
+          agrees at the quiet end.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Verify at the loud end</h3>
+        <p>
+          Play a steady tone or run a noisy appliance and compare panel against meter. If the
+          error is a constant offset everywhere, adjust <code>MIC_CAL_DB</code>. If it is
+          correct when quiet but wrong when loud, the amplifier is clipping: turn the trimpot
+          down about half a turn counter-clockwise and redo the quiet calibration.
+        </p>
+      </li>
+    </ol>
+
+    <div class="note">
+      <h4>Reading SOUND_DEBUG</h4>
+      <p>
+        With <code>SOUND_DEBUG</code> true, every read prints its raw statistics. Check these
+        before trusting any decibel value.
+      </p>
+      <pre style="margin-top:12px;margin-bottom:0"><code># mic raw: mean=1925 min=1719 max=2077 p-p=358  (bias=1922)</code></pre>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Condition</th><th>Expected</th></tr></thead>
+        <tbody>
+          <tr><td>Connected, quiet room</td><td class="wide">Mean around 1900 to 2100, peak-to-peak a few tens of counts.</td></tr>
+          <tr><td>Connected, hand clap</td><td class="wide">Peak-to-peak jumps to hundreds or thousands.</td></tr>
+          <tr><td>Disconnected</td><td class="wide">Mean drifts, peak-to-peak large and random. This is a floating pin, not a real 140 dB event.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="alarms">Alarms</h2>
+
+    <p>
+      Each quantity has a band, a hysteresis margin and a beep pattern. The margin is what stops
+      a reading sitting exactly on a limit from chattering the buzzer on and off every two
+      seconds.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Alarm</th><th>Raises at</th><th>Clears at</th><th>Pattern</th><th>Tone</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Temperature</td>
+            <td class="mono">&lt;18.0 or &gt;30.0 &deg;C</td>
+            <td class="mono">back inside by 0.5</td>
+            <td class="mono">3 beeps</td><td class="mono">2200 Hz</td>
+          </tr>
+          <tr>
+            <td>Light</td>
+            <td class="mono">&lt;300 or &gt;800 lx</td>
+            <td class="mono">back inside by 25</td>
+            <td class="mono">2 beeps</td><td class="mono">1200 Hz</td>
+          </tr>
+          <tr>
+            <td>Sound</td>
+            <td class="mono">peak &gt;70 dB</td>
+            <td class="mono">back inside by 3</td>
+            <td class="mono">4 beeps</td><td class="mono">1700 Hz</td>
+          </tr>
+          <tr>
+            <td>Boot chirp</td>
+            <td class="mono">once, at startup</td>
+            <td class="mono">n/a</td>
+            <td class="mono">2 beeps</td><td class="mono">1500 Hz</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Beeps are 150 ms on, 150 ms off, driven entirely from <code>serviceAlarm()</code> against
+      <code>millis()</code>. A new alarm arriving mid-pattern is ignored rather than queued, so
+      patterns never interleave into something unreadable.
+    </p>
+
+    <div class="note">
+      <h4>The sound alarm is gated on calibration</h4>
+      <p>
+        <code>evaluateAlarms()</code> skips the sound branch entirely while
+        <code>MIC_CAL_DB</code> is zero. An uncalibrated reading is tens of decibels high and
+        would alarm continuously. The value is still measured, still displayed and still
+        published, with <code>sound_calibrated: false</code> marking it as untrustworthy.
+      </p>
+    </div>
+
+    <h2 id="panel">TFT dashboard</h2>
+
+    <p>
+      A 480&times;320 landscape dashboard, redrawn once per sample. Four reading cards, each
+      with an icon, a value, a unit and a bar showing where the reading sits inside its band,
+      plus a header carrying the alarm banner, the Wi-Fi indicator and a clock.
+    </p>
+
+    <p>
+      When any alarm is active the affected card's background switches from the surface colour
+      to the alert colour, so the state is legible from across a room where the numbers are not.
+    </p>
+
+    <h3>Panel colours</h3>
+
+    <p>
+      Defined once in <code>TFT_Panel.h</code> as RGB565 constants with their source hex in a
+      comment. These are the same values this documentation is built from, so the page you are
+      reading and the screen on the wall agree on what a warning looks like.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Constant</th><th>RGB565</th><th>Hex</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">COL_BG</td><td class="mono">0x0882</td><td class="mono">#0D1117</td><td>Page ground</td></tr>
+          <tr><td class="mono">COL_SURFACE</td><td class="mono">0x10C4</td><td class="mono">#161B22</td><td>Card fill</td></tr>
+          <tr><td class="mono">COL_EDGE</td><td class="mono">0x2987</td><td class="mono">#2A313C</td><td>Card border</td></tr>
+          <tr><td class="mono">COL_TRACK</td><td class="mono">0x31A7</td><td class="mono">#30363D</td><td>Unfilled bar</td></tr>
+          <tr><td class="mono">COL_LABEL</td><td class="mono">0x8CB5</td><td class="mono">#8B97A8</td><td>Captions</td></tr>
+          <tr><td class="mono">COL_VALUE</td><td class="mono">0xE79E</td><td class="mono">#E6EDF3</td><td>Primary text</td></tr>
+          <tr><td class="mono">COL_OK</td><td class="mono">0x3DCA</td><td class="mono">#3FB950</td><td>Inside band</td></tr>
+          <tr><td class="mono">COL_WARN</td><td class="mono">0xD4C4</td><td class="mono">#D29922</td><td>Near a limit</td></tr>
+          <tr><td class="mono">COL_ALERT</td><td class="mono">0xFA89</td><td class="mono">#F85149</td><td>Outside band</td></tr>
+          <tr><td class="mono">COL_DROP</td><td class="mono">0x5D3F</td><td class="mono">#58A6FF</td><td>Humidity</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="serial">Serial output</h2>
+
+    <p>
+      UART0 at 115200 carries three interleaved things, distinguished by their first character
+      so a capture can be filtered after the fact.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Prefix</th><th>Stream</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">#</td><td>Diagnostics</td><td class="wide">Alarm transitions, read failures, raw microphone statistics.</td></tr>
+          <tr><td class="mono">+ and |</td><td>Status panel</td><td class="wide">The boxed human-readable block, mirroring the TFT.</td></tr>
+          <tr><td class="mono">digit</td><td>CSV</td><td class="wide">One data row per sample, ready for a spreadsheet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre><code>time_ms,temp_c,humidity_pct,lux,sound_avg_db,sound_peak_db,alerts
+41284,23.71,58.20,412.5,44.3,51.8,---</code></pre>
+
+    <p>
+      Failed readings appear as <code>NaN</code> rather than being dropped, so row count still
+      tracks elapsed time. The <code>alerts</code> column is three fixed positions for
+      temperature, light and sound, each either its letter or a dash.
+    </p>
+
+    <div class="next">
+      <a href="mqtt.html"><b>MQTT contract</b><span>How these readings leave the node</span></a>
+      <a href="setup.html#calibrate"><b>Calibrating a new unit</b><span>The procedure in build order</span></a>
+    </div>
+
+    <p class="foot">Classroom Environment Monitor &middot; firmware notes for the 2026-09-13 revision</p>
+
+  </main>
+</div>
+</body>
+</html>

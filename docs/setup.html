@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Build &amp; Bring-Up</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="Build and bring-up: toolchain, flashing, microphone calibration, Docker stack, Node-RED and Grafana.">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <div class="rail-id">
+      <b>Classroom Environment Monitor</b>
+      <span>ESP32-S3 &middot; rev 2026-09-13</span>
+    </div>
+    <nav>
+      <a href="index.html">Overview</a>
+      <a href="hardware.html">Pins &amp; wiring</a>
+      <a href="firmware.html">Firmware</a>
+      <a href="mqtt.html">MQTT contract</a>
+      <a href="setup.html" aria-current="page">Build &amp; bring-up</a>
+    </nav>
+    <div class="rail-sub">
+      <p>On this page</p>
+      <a href="#prereq">Prerequisites</a>
+      <a href="#toolchain">Toolchain</a>
+      <a href="#secrets">Credentials</a>
+      <a href="#tft">TFT_eSPI pin map</a>
+      <a href="#bringup">Bring-up order</a>
+      <a href="#flash">Flash the node</a>
+      <a href="#calibrate">Calibrate the mic</a>
+      <a href="#stack">Start the stack</a>
+      <a href="#verify">Verify the stream</a>
+      <a href="#influx">InfluxDB</a>
+      <a href="#nodered">Node-RED</a>
+      <a href="#grafana">Grafana</a>
+      <a href="#security">Before real use</a>
+    </div>
+  </aside>
+
+  <main class="page">
+
+    <p class="crumb">Build &amp; bring-up</p>
+    <h1>From an empty board to a live dashboard</h1>
+
+    <p class="lede">
+      Budget two to three hours the first time, most of it waiting on downloads. The order here
+      is not arbitrary. Each stage ends with something you can check, and a check that fails
+      tells you which stage broke rather than leaving you with a dead board and five suspects.
+    </p>
+
+    <h2 id="prereq">Prerequisites</h2>
+
+    <p>Three things to have before starting.</p>
+
+    <ul>
+      <li>
+        <strong>Your PC's LAN address.</strong> Run <code>ipconfig</code> on Windows or
+        <code>ip addr</code> on Linux and note the IPv4 address on your local network. The node
+        needs this to find the broker, and <code>localhost</code> will not do: the node is a
+        separate machine.
+      </li>
+      <li>
+        <strong>The ESP32 wired.</strong> All sensors and, if you are using it, the display. See
+        <a href="hardware.html">pins and wiring</a>.
+      </li>
+      <li>
+        <strong>A phone SPL meter app.</strong> Needed for the microphone calibration, which
+        cannot be skipped if you want the sound alarm to work.
+      </li>
+    </ul>
+
+    <h2 id="toolchain">Toolchain</h2>
+
+    <ol class="steps">
+      <li class="step">
+        <h3>Install the Arduino IDE and the ESP32 board package</h3>
+        <p>Then set the board and its options exactly as below. The PSRAM setting in particular is not the default.</p>
+        <div class="tw" style="margin-top:12px">
+          <table>
+            <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+            <tbody>
+              <tr><td>Board</td><td class="mono">ESP32S3 Dev Module</td></tr>
+              <tr><td>PSRAM</td><td class="mono">OPI PSRAM</td></tr>
+              <tr><td>Flash Size</td><td class="mono">16MB</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </li>
+      <li class="step">
+        <h3>Install four libraries</h3>
+        <p>All from the Library Manager. The first pulls in a dependency you should accept.</p>
+        <div class="tw" style="margin-top:12px">
+          <table>
+            <thead><tr><th>Library</th><th>Author</th><th>For</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">Adafruit SHT31</td><td>Adafruit</td><td class="wide">Temperature and humidity. Also installs Adafruit BusIO.</td></tr>
+              <tr><td class="mono">BH1750</td><td>Christopher Laws</td><td class="wide">Illuminance.</td></tr>
+              <tr><td class="mono">PubSubClient</td><td>Nick O'Leary</td><td class="wide">MQTT.</td></tr>
+              <tr><td class="mono">TFT_eSPI</td><td>Bodmer</td><td class="wide">The display. Needs the extra configuration step below.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </li>
+      <li class="step">
+        <h3>Install Docker Desktop</h3>
+        <p>
+          Needed for the backend, not for the node. If Docker Desktop will not run on your
+          machine, the four services can be installed natively instead, at the cost of doing
+          four installs and four config files by hand.
+        </p>
+      </li>
+    </ol>
+
+    <h2 id="secrets">Credentials</h2>
+
+    <p>
+      Wi-Fi and broker credentials live in <code>secrets.h</code>, which is gitignored and not
+      in the repository. Create it from the template.
+    </p>
+
+    <pre><code>cd CR_Monitor
+cp secrets.example.h secrets.h</code></pre>
+
+    <p>Then fill in the real values.</p>
+
+    <pre><code><span class="k">const char</span>* WIFI_SSID     = <span class="s">"YOUR_WIFI_SSID"</span>;
+<span class="k">const char</span>* WIFI_PASSWORD = <span class="s">"YOUR_WIFI_PASSWORD"</span>;
+
+<span class="c">// Leave both empty for an anonymous broker.</span>
+<span class="k">const char</span>* MQTT_USER = <span class="s">""</span>;
+<span class="k">const char</span>* MQTT_PASS = <span class="s">""</span>;</code></pre>
+
+    <p>
+      Two more values live in <code>CR_Monitor.ino</code> itself and need editing per install:
+    </p>
+
+    <pre><code><span class="k">const char</span>* MQTT_HOST = <span class="s">"192.168.1.5"</span>;   <span class="c">// your PC's LAN IP</span>
+<span class="k">const char</span>* ROOM_ID   = <span class="s">"room-101"</span>;      <span class="c">// this node's room</span></code></pre>
+
+    <div class="note">
+      <h4>Which file is the real sketch</h4>
+      <p>
+        <code>CR_Monitor/CR_Monitor.ino</code>. A copy exists at the repository root as
+        <code>CR_Monitor.cpp</code>; it is a working duplicate, it is gitignored, and it is
+        behind. Older notes in <code>SETUP_GUIDE.txt</code> describe the opposite arrangement
+        and are stale. Open the <code>.ino</code>.
+      </p>
+    </div>
+
+    <h2 id="tft">TFT_eSPI pin map</h2>
+
+    <div class="note warn">
+      <h4>This is the step that most often gets skipped</h4>
+      <p>
+        TFT_eSPI does not read its configuration from your sketch folder. It reads it from
+        inside its own installed library directory. The pin map is versioned in this repository
+        so it is not lost, but a copy in the repo has no effect on a build: you have to install
+        it. Miss this and the display will not work no matter how correct your wiring is.
+      </p>
+    </div>
+
+    <p>Pick either approach.</p>
+
+    <ul>
+      <li>
+        Copy the body of <code>CR_Monitor/TFT_Setup_CR_Monitor.h</code> over
+        <code>TFT_eSPI/User_Setup.h</code> in your Arduino libraries folder, or
+      </li>
+      <li>
+        place the file in the TFT_eSPI folder and point
+        <code>User_Setup_Select.h</code> at it.
+      </li>
+    </ul>
+
+    <p>
+      The file selects the driver as well as the pins. Exactly one driver may be active, and it
+      is set to <code>ILI9481_DRIVER</code>, confirmed against this panel on 2026-09-13.
+    </p>
+
+    <div class="note">
+      <h4>If the screen is white but the backlight is lit</h4>
+      <p>
+        A wrong driver produces exactly this: the init sequence means nothing to the controller,
+        so nothing is ever drawn. It is also what a missing 3.3 V logic supply looks like, so
+        rule out <a href="hardware.html#regulator">the regulator question</a> first. Then work
+        down the commented driver list in the setup header, reflashing each time. This panel was
+        assumed to be HX8357D for a while, which is why it stayed white; the pin map had been
+        right the whole time.
+      </p>
+    </div>
+
+    <h2 id="bringup">Bring-up order</h2>
+
+    <p>
+      Five single-purpose sketches, each proving one thing. Run them in this order on a board you
+      have not run before. Each takes under a minute and saves considerably more than that.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Sketch</th><th>Proves</th><th>Pass looks like</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Test_Rail</td><td class="wide">Supply rails are where they should be.</td><td class="wide">Measured millivolts within tolerance.</td></tr>
+          <tr><td class="mono">I2C_Scan</td><td class="wide">The bus works and devices acknowledge.</td><td class="mono">0x44 and 0x23 found</td></tr>
+          <tr><td class="mono">Test_SHT3x</td><td class="wide">Temperature and humidity read plausibly.</td><td class="wide">Room temperature, stable.</td></tr>
+          <tr><td class="mono">Test_BH1750</td><td class="wide">Illuminance responds to light.</td><td class="wide">Value drops when you cover the sensor.</td></tr>
+          <tr><td class="mono">Test_TFT</td><td class="wide">The parallel bus and pin map are correct.</td><td class="wide">A solid red screen.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      If <code>I2C_Scan</code> finds nothing, check SDA on GPIO8, SCL on GPIO9, that 3.3 V is
+      actually present at the sensors, and that they share a ground with the ESP32. That
+      combination accounts for nearly every empty scan.
+    </p>
+
+    <h2 id="flash">Flash the node</h2>
+
+    <ol class="steps">
+      <li class="step">
+        <h3>Open and upload CR_Monitor.ino</h3>
+        <p>Then open Serial Monitor at <strong>115200</strong> baud.</p>
+      </li>
+      <li class="step">
+        <h3>Read the self-test</h3>
+        <p>
+          The boot report runs before anything else and tells you what the node thinks of its own
+          hardware. Two beeps at the end are the buzzer self-test. Do not move on with a
+          <span class="pill fail">FAIL</span> on the bus or the microphone.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Confirm the panel and the CSV</h3>
+        <p>
+          A boxed status block and a CSV row should appear every two seconds, and the TFT should
+          show four cards with live values.
+        </p>
+        <pre style="margin-top:12px"><code>+------------------------------+
+| Classroom Monitor
+| Temp : 23.7 C
+| Humid: 58.2 %
+| Light: 412 lx
+| Sound: 52 dB peak (avg 44 dB, 1.31 mVrms)
+| Wi-Fi: connected
+| MQTT : connected, seq 20, time ok
++------------------------------+</code></pre>
+      </li>
+    </ol>
+
+    <h2 id="calibrate">Calibrate the microphone</h2>
+
+    <p>
+      Do this before trusting any decibel figure, and before the sound alarm will arm at all.
+      The node ships with <code>sound_calibrated</code> reporting whether this has been done.
+    </p>
+
+    <p>
+      First check the raw statistics printed by <code>SOUND_DEBUG</code>. In a quiet room the
+      mean should be around 1900 to 2100 counts with a peak-to-peak of a few tens. A drifting
+      mean with large random swings means a floating pin, not a loud room.
+    </p>
+
+    <p>
+      Then follow the four-step procedure on the
+      <a href="firmware.html#calibration">firmware page</a>: zero the constant, read the panel,
+      measure the room with a real meter, and set the constant to the difference. Verify at the
+      loud end afterwards, because an error that only appears when loud is the amplifier
+      clipping and needs the trimpot turned down instead.
+    </p>
+
+    <h2 id="stack">Start the stack</h2>
+
+    <pre><code>docker compose up -d</code></pre>
+
+    <p>Four services come up. Data lives in named volumes, so <code>docker compose down</code> keeps it.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Service</th><th>Image</th><th>URL</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">mosquitto</td><td class="mono">eclipse-mosquitto:2</td><td class="mono">:1883</td><td class="wide">Broker. Everything the node says arrives here.</td></tr>
+          <tr><td class="mono">nodered</td><td class="mono">nodered/node-red</td><td class="mono">:1880</td><td class="wide">Subscribes, validates, writes.</td></tr>
+          <tr><td class="mono">influxdb</td><td class="mono">influxdb:2.7</td><td class="mono">:8086</td><td class="wide">Time-series storage.</td></tr>
+          <tr><td class="mono">grafana</td><td class="mono">grafana/grafana</td><td class="mono">:3000</td><td class="wide">Dashboards. First login is admin / admin.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre><code>docker compose logs -f mosquitto     <span class="c"># watch the broker</span>
+docker compose ps                    <span class="c"># confirm all four are up</span></code></pre>
+
+    <div class="note warn">
+      <h4>Inside the stack, use container names and not localhost</h4>
+      <p>
+        Node-RED talks to InfluxDB at <code>http://influxdb:8086</code> and to the broker at
+        host <code>mosquitto</code>. From inside a container, <code>localhost</code> means that
+        container itself, so a connection to <code>localhost:8086</code> goes nowhere. Use
+        <code>localhost</code> only in your own browser.
+      </p>
+    </div>
+
+    <h2 id="verify">Verify the stream</h2>
+
+    <p>
+      Before building anything downstream, confirm messages are actually arriving. Install MQTTX,
+      connect it to your PC's LAN IP on port 1883, and subscribe to:
+    </p>
+
+    <pre><code>classroom/#</code></pre>
+
+    <p>
+      You should see a telemetry object every two seconds, plus a retained
+      <code>status</code> of <code>online</code> that arrives the moment you subscribe. If
+      telemetry is flowing but nothing reaches Node-RED later, the problem is downstream of
+      here, which is worth knowing now.
+    </p>
+
+    <h2 id="influx">InfluxDB</h2>
+
+    <ol class="steps">
+      <li class="step">
+        <h3>Complete initial setup</h3>
+        <p>
+          Open <code>http://localhost:8086</code> and work through the first-run wizard. Set the
+          organisation to <code>classroom</code> and the initial bucket to <code>sensors</code>.
+          These names are referenced by both Node-RED and Grafana.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Create an API token</h3>
+        <p>
+          Generate a token with write access to the <code>sensors</code> bucket. Copy it
+          somewhere outside the repository; you will paste it into Node-RED and Grafana, and it
+          is shown in full only once.
+        </p>
+      </li>
+    </ol>
+
+    <div class="note alert">
+      <h4>Do not paste the token into a tracked file</h4>
+      <p>
+        Not into a sketch, not into a notes file, not into a setup guide. Anything committed to
+        git stays in the history even after you delete it, and a repository that is private today
+        may not be tomorrow. Keep tokens in the tools that need them. If one does end up
+        committed, revoking and reissuing it in InfluxDB is the fix; deleting the line is not.
+      </p>
+    </div>
+
+    <h2 id="nodered">Node-RED</h2>
+
+    <p>
+      Three nodes in a line, plus an optional debug tap. This is where raw MQTT becomes rows in a
+      database, and where impossible readings get rejected.
+    </p>
+
+    <ol class="steps">
+      <li class="step">
+        <h3>Install the InfluxDB nodes</h3>
+        <p>
+          Menu, then Manage palette, Install tab, search
+          <code>node-red-contrib-influxdb</code>, install.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Add an mqtt in node</h3>
+        <div class="tw" style="margin-top:8px">
+          <table>
+            <tbody>
+              <tr><td class="mono">Server</td><td class="mono">mosquitto</td></tr>
+              <tr><td class="mono">Port</td><td class="mono">1883</td></tr>
+              <tr><td class="mono">Topic</td><td class="mono">classroom/+/+/telemetry</td></tr>
+              <tr><td class="mono">Output</td><td class="wide">a parsed JSON object</td></tr>
+              <tr><td class="mono">QoS</td><td class="mono">0</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </li>
+      <li class="step">
+        <h3>Add a function node named validate</h3>
+        <p>
+          It does two jobs: drop anything not shaped like this project's telemetry, and reject
+          physically impossible values so one bad reading does not end up in a chart forever.
+        </p>
+        <pre style="margin-top:12px"><code><span class="k">const</span> d = msg.payload;
+<span class="c">// drop anything not shaped like our telemetry</span>
+<span class="k">if</span> (<span class="k">typeof</span> d !== <span class="s">'object'</span> || d.seq === undefined) <span class="k">return</span> null;
+
+<span class="c">// range sanity - reject impossible readings</span>
+<span class="k">const</span> bad =
+  (d.temp_c  !== null &amp;&amp; (d.temp_c  &lt; -10 || d.temp_c  &gt; 60)) ||
+  (d.hum_pct !== null &amp;&amp; (d.hum_pct &lt; 0   || d.hum_pct &gt; 100)) ||
+  (d.lux     !== null &amp;&amp; (d.lux     &lt; 0   || d.lux     &gt; 120000)) ||
+  (d.sound_peak_db &lt; 0 || d.sound_peak_db &gt; 140);
+<span class="k">if</span> (bad) { node.warn(<span class="s">'rejected: '</span> + JSON.stringify(d)); <span class="k">return</span> null; }
+
+<span class="c">// split topic classroom/&lt;room&gt;/&lt;node&gt;/telemetry</span>
+<span class="k">const</span> parts = msg.topic.split(<span class="s">'/'</span>);
+msg.room = parts[1];
+msg.node = parts[2];
+<span class="k">return</span> msg;</code></pre>
+        <p>
+          Note that each numeric check is guarded against <code>null</code> first. A failed
+          sensor read publishes <code>null</code>, and comparing null against a number would
+          silently reject a perfectly good message.
+        </p>
+      </li>
+      <li class="step">
+        <h3>Add an influxdb out node</h3>
+        <div class="tw" style="margin-top:8px">
+          <table>
+            <tbody>
+              <tr><td class="mono">Version</td><td class="mono">2.0</td></tr>
+              <tr><td class="mono">URL</td><td class="mono">http://influxdb:8086</td></tr>
+              <tr><td class="mono">Token</td><td class="wide">the token from the previous section</td></tr>
+              <tr><td class="mono">Organization</td><td class="mono">classroom</td></tr>
+              <tr><td class="mono">Bucket</td><td class="mono">sensors</td></tr>
+              <tr><td class="mono">Measurement</td><td class="mono">reading</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </li>
+      <li class="step">
+        <h3>Deploy and watch</h3>
+        <p>
+          Wire a debug node off the validate output. After deploying, a validated object should
+          appear in the Debug panel every two seconds, the mqtt node should read connected, and
+          the InfluxDB node should show no error.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      Confirm the data landed before moving on. In the InfluxDB Data Explorer, query bucket
+      <code>sensors</code>, filter <code>_measurement = reading</code> and
+      <code>_field = temp_c</code>, and you should see a live line.
+    </p>
+
+    <h2 id="grafana">Grafana</h2>
+
+    <ol class="steps">
+      <li class="step">
+        <h3>Add InfluxDB as a data source</h3>
+        <p>Open <code>http://localhost:3000</code>, sign in with admin / admin, set a new password, then Connections, Data sources, Add data source, InfluxDB.</p>
+        <div class="tw" style="margin-top:12px">
+          <table>
+            <tbody>
+              <tr><td class="mono">Query language</td><td class="mono">Flux</td></tr>
+              <tr><td class="mono">URL</td><td class="mono">http://influxdb:8086</td></tr>
+              <tr><td class="mono">Organization</td><td class="mono">classroom</td></tr>
+              <tr><td class="mono">Token</td><td class="wide">the same token</td></tr>
+              <tr><td class="mono">Default bucket</td><td class="mono">sensors</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Save and test should report that the datasource is working.</p>
+      </li>
+      <li class="step">
+        <h3>Build the first panel</h3>
+        <p>New dashboard, add visualization, pick the InfluxDB source, and paste this Flux query.</p>
+        <pre style="margin-top:12px"><code>from(bucket: <span class="s">"sensors"</span>)
+  |&gt; range(start: -6h)
+  |&gt; filter(fn: (r) =&gt; r._measurement == <span class="s">"reading"</span>)
+  |&gt; filter(fn: (r) =&gt; r._field == <span class="s">"temp_c"</span>)</code></pre>
+      </li>
+      <li class="step">
+        <h3>Repeat for the other three series</h3>
+        <p>
+          Change the final filter to <code>hum_pct</code>, <code>lux</code> and
+          <code>sound_peak_db</code> in turn. Arrange the panels and save the dashboard.
+        </p>
+      </li>
+    </ol>
+
+    <div class="note ok">
+      <h4>At this point the pipeline is complete</h4>
+      <p>
+        Sensors to broker to validation to storage to dashboard, updating every two seconds.
+        What remains is what turns a working demo into an actual study: the occupancy stream,
+        the comfort responses, and the analysis that puts the two against the sensor data.
+      </p>
+    </div>
+
+    <h2 id="security">Before real use</h2>
+
+    <p>
+      The defaults here are chosen for getting a bench build working, and several of them are
+      wrong for a building with people in it. None is hard to fix; they just have to be done
+      deliberately.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Default</th><th>Risk</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="mono">allow_anonymous true</td>
+            <td class="wide">Anyone on the LAN can read all telemetry or inject convincing fake readings.</td>
+            <td class="wide">A Mosquitto password file, per-node credentials, and topic ACLs limiting each node to its own subtree.</td>
+          </tr>
+          <tr>
+            <td class="mono">admin / admin</td>
+            <td class="wide">Grafana ships with a known password.</td>
+            <td class="wide">Change it at first login, which Grafana prompts for. Do not skip the prompt.</td>
+          </tr>
+          <tr>
+            <td class="mono">port 1883</td>
+            <td class="wide">Credentials and payloads cross the network in plain text.</td>
+            <td class="wide">TLS on 8883 once authentication is in place.</td>
+          </tr>
+          <tr>
+            <td class="mono">all-access API token</td>
+            <td class="wide">A single token with full organisation rights in two config fields.</td>
+            <td class="wide">Separate tokens: write-only to <code>sensors</code> for Node-RED, read-only for Grafana.</td>
+          </tr>
+          <tr>
+            <td class="mono">thresholds in firmware</td>
+            <td class="wide">Placeholder limits presented as if they were standards.</td>
+            <td class="wide">Cite a source for each band before publishing any findings from the data.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      One thing that is already right and worth keeping right: the sound path never records
+      audio, and the planned occupancy input is a bucket rather than a headcount. Those are the
+      properties that make the monitor something a room full of people can reasonably be asked
+      to accept, and they are easy to erode by accident once someone wants better data.
+    </p>
+
+    <div class="next">
+      <a href="hardware.html"><b>Pins &amp; wiring</b><span>Every connection, with the reasoning</span></a>
+      <a href="firmware.html"><b>Firmware</b><span>What runs on the node once it is flashed</span></a>
+      <a href="mqtt.html"><b>MQTT contract</b><span>The payload schema Node-RED consumes</span></a>
+    </div>
+
+    <p class="foot">Classroom Environment Monitor &middot; bring-up guide for the 2026-09-13 revision</p>
+
+  </main>
+</div>
+</body>
+</html>

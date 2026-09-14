@@ -8,6 +8,22 @@ An ESP32-S3 node samples its sensors and publishes JSON telemetry over MQTT. A l
 Docker stack (Mosquitto → Node-RED → InfluxDB → Grafana) validates, stores and
 visualises the stream.
 
+## Documentation
+
+**[Read the full documentation](https://reyvanair.github.io/CR_Monitor/)**
+
+Five parts, covering the whole build:
+
+| | |
+|---|---|
+| [Overview](https://reyvanair.github.io/CR_Monitor/) | Architecture, what it measures, project stages |
+| [Pins & wiring](https://reyvanair.github.io/CR_Monitor/hardware.html) | Full GPIO map, sensors, display shield |
+| [Firmware](https://reyvanair.github.io/CR_Monitor/firmware.html) | Boot order, sampling loop, sound maths, alarms |
+| [MQTT contract](https://reyvanair.github.io/CR_Monitor/mqtt.html) | Topics, payload schema, retained state |
+| [Build & bring-up](https://reyvanair.github.io/CR_Monitor/setup.html) | Toolchain, flashing, calibration, backend |
+
+The same pages are in [`docs/`](docs/) and open offline straight from the filesystem.
+
 ## Hardware
 
 | Part | Function | Connection |
@@ -34,6 +50,7 @@ High) rather than a headcount. Both are deliberate design choices, not limitatio
 CR_Monitor/CR_Monitor.ino   ESP32-S3 sketch — sensors, Wi-Fi, MQTT
 CR_Monitor_NOTES.txt        Design notes: wiring, decisions, the "why"
 SETUP_GUIDE.txt             Step-by-step build and deployment guide
+docs/                       Project documentation (HTML, also served as a site)
 docker-compose.yml          Mosquitto + InfluxDB + Node-RED + Grafana
 mosquitto.conf              Broker config (anonymous — LAN use only)
 diagram.json                Wokwi simulation layout

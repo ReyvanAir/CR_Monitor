@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pins &amp; Wiring</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="Complete pin map and wiring for the ESP32-S3 node and its ILI9481 parallel display shield.">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <div class="rail-id">
+      <b>Classroom Environment Monitor</b>
+      <span>ESP32-S3 &middot; rev 2026-09-13</span>
+    </div>
+    <nav>
+      <a href="index.html">Overview</a>
+      <a href="hardware.html" aria-current="page">Pins &amp; wiring</a>
+      <a href="firmware.html">Firmware</a>
+      <a href="mqtt.html">MQTT contract</a>
+      <a href="setup.html">Build &amp; bring-up</a>
+    </nav>
+    <div class="rail-sub">
+      <p>On this page</p>
+      <a href="#budget">The pin budget</a>
+      <a href="#sensors">Sensors and buzzer</a>
+      <a href="#shield">Display shield</a>
+      <a href="#unconnected">Leave unconnected</a>
+      <a href="#sd">Optional microSD</a>
+      <a href="#regulator">The regulator problem</a>
+      <a href="#practice">Wiring practice</a>
+    </div>
+  </aside>
+
+  <main class="page">
+
+    <p class="crumb">Pins &amp; wiring</p>
+    <h1>Every connection, and why it lands where it does</h1>
+
+    <p class="lede">
+      The ESP32-S3 DevKitC-1 N16R8 advertises 45 usable GPIOs. By the time the flash, the
+      PSRAM, the USB pair, the serial console and the ADC2 restriction have taken their share,
+      the display's thirteen signals fit with almost nothing to spare. Nearly every pin choice
+      on this board is forced. This page records what forced it.
+    </p>
+
+    <div class="note">
+      <h4>Before you wire anything</h4>
+      <p>
+        Both boards present male pins, so every jumper here is <strong>female to female</strong>.
+        Shield labels are read from its own silkscreen (headers J1 to J4); ESP32 numbers are the
+        GPIO numbers printed on the DevKitC-1.
+      </p>
+    </div>
+
+    <h2 id="budget">The pin budget</h2>
+
+    <p>
+      Four constraints eliminate most of the map before any design choice is made:
+    </p>
+
+    <ul>
+      <li><strong>GPIO 26 to 32 are the SPI flash</strong> and <strong>33 to 37 are the OPI PSRAM</strong>, which is what the "R8" in N16R8 means. Twelve pins gone, permanently.</li>
+      <li><strong>GPIO 22 to 25 do not exist</strong> on the S3 package. They are absent, not reserved.</li>
+      <li><strong>GPIO 43 and 44 carry UART0</strong>, which is the serial CSV output; 19 and 20 are USB; 0, 45 and 46 are strapping pins sampled at reset.</li>
+      <li><strong>ADC2 stops converting whenever Wi-Fi is on.</strong> Anything analogue has to sit on ADC1, meaning GPIO 1 to 10.</li>
+    </ul>
+
+    <figure>
+      <div class="fig-wrap">
+        <svg viewBox="0 0 900 292" role="img" aria-label="Allocation map of all 49 ESP32-S3 GPIO positions, colour coded by display bus, sensors, reserved functions, unavailable pins, optional microSD and free pins.">
+          <rect x="3" y="8" width="85" height="44" rx="3" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="11" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">0</text>
+          <text x="11" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">strap</text>
+          <rect x="92" y="8" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="100" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">1</text>
+          <text x="100" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_CS &#183; ADC1</text>
+          <rect x="181" y="8" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="189" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">2</text>
+          <text x="189" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_DC &#183; ADC1</text>
+          <rect x="270" y="8" width="85" height="44" rx="3" fill="none" stroke="var(--edge)" stroke-width="1"></rect>
+          <text x="278" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text-soft)">3</text>
+          <text x="278" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">free</text>
+          <rect x="359" y="8" width="85" height="44" rx="3" fill="none" stroke="var(--edge)" stroke-width="1"></rect>
+          <text x="367" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text-soft)">4</text>
+          <text x="367" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">free</text>
+          <rect x="448" y="8" width="85" height="44" rx="3" fill="var(--ok-wash)" stroke="var(--ok)" stroke-width="1"></rect>
+          <text x="456" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">5</text>
+          <text x="456" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">MIC &#183; ADC1</text>
+          <rect x="537" y="8" width="85" height="44" rx="3" fill="none" stroke="var(--edge)" stroke-width="1"></rect>
+          <text x="545" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text-soft)">6</text>
+          <text x="545" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">free</text>
+          <rect x="626" y="8" width="85" height="44" rx="3" fill="var(--ok-wash)" stroke="var(--ok)" stroke-width="1"></rect>
+          <text x="634" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">7</text>
+          <text x="634" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">BUZZER</text>
+          <rect x="715" y="8" width="85" height="44" rx="3" fill="var(--ok-wash)" stroke="var(--ok)" stroke-width="1"></rect>
+          <text x="723" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">8</text>
+          <text x="723" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">I2C SDA</text>
+          <rect x="804" y="8" width="85" height="44" rx="3" fill="var(--ok-wash)" stroke="var(--ok)" stroke-width="1"></rect>
+          <text x="812" y="27" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">9</text>
+          <text x="812" y="42" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">I2C SCL</text>
+          <rect x="3" y="56" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="11" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">10</text>
+          <text x="11" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_D0</text>
+          <rect x="92" y="56" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="100" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">11</text>
+          <text x="100" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_D1</text>
+          <rect x="181" y="56" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="189" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">12</text>
+          <text x="189" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_D2</text>
+          <rect x="270" y="56" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="278" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">13</text>
+          <text x="278" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_D3</text>
+          <rect x="359" y="56" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="367" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">14</text>
+          <text x="367" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_D4</text>
+          <rect x="448" y="56" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="456" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">15</text>
+          <text x="456" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_D5</text>
+          <rect x="537" y="56" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="545" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">16</text>
+          <text x="545" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_D6</text>
+          <rect x="626" y="56" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="634" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">17</text>
+          <text x="634" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_D7</text>
+          <rect x="715" y="56" width="85" height="44" rx="3" fill="var(--surface-2)" stroke="var(--label)" stroke-width="1"></rect>
+          <text x="723" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">18</text>
+          <text x="723" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SD_SCK opt</text>
+          <rect x="804" y="56" width="85" height="44" rx="3" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="812" y="75" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">19</text>
+          <text x="812" y="90" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">USB D-</text>
+          <rect x="3" y="104" width="85" height="44" rx="3" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="11" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">20</text>
+          <text x="11" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">USB D+</text>
+          <rect x="92" y="104" width="85" height="44" rx="3" fill="var(--surface-2)" stroke="var(--label)" stroke-width="1"></rect>
+          <text x="100" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">21</text>
+          <text x="100" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SD_MISO opt</text>
+          <rect x="181" y="104" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="189" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">22</text>
+          <text x="189" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">not on S3</text>
+          <rect x="270" y="104" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="278" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">23</text>
+          <text x="278" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">not on S3</text>
+          <rect x="359" y="104" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="367" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">24</text>
+          <text x="367" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">not on S3</text>
+          <rect x="448" y="104" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="456" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">25</text>
+          <text x="456" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">not on S3</text>
+          <rect x="537" y="104" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="545" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">26</text>
+          <text x="545" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SPI flash</text>
+          <rect x="626" y="104" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="634" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">27</text>
+          <text x="634" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SPI flash</text>
+          <rect x="715" y="104" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="723" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">28</text>
+          <text x="723" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SPI flash</text>
+          <rect x="804" y="104" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="812" y="123" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">29</text>
+          <text x="812" y="138" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SPI flash</text>
+          <rect x="3" y="152" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="11" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">30</text>
+          <text x="11" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SPI flash</text>
+          <rect x="92" y="152" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="100" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">31</text>
+          <text x="100" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SPI flash</text>
+          <rect x="181" y="152" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="189" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">32</text>
+          <text x="189" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SPI flash</text>
+          <rect x="270" y="152" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="278" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">33</text>
+          <text x="278" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">OPI PSRAM</text>
+          <rect x="359" y="152" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="367" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">34</text>
+          <text x="367" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">OPI PSRAM</text>
+          <rect x="448" y="152" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="456" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">35</text>
+          <text x="456" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">OPI PSRAM</text>
+          <rect x="537" y="152" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="545" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">36</text>
+          <text x="545" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">OPI PSRAM</text>
+          <rect x="626" y="152" width="85" height="44" rx="3" fill="var(--alert-wash)" stroke="var(--alert)" stroke-width="1"></rect>
+          <text x="634" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">37</text>
+          <text x="634" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">OPI PSRAM</text>
+          <rect x="715" y="152" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="723" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">38</text>
+          <text x="723" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_WR</text>
+          <rect x="804" y="152" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="812" y="171" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">39</text>
+          <text x="812" y="186" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_RD</text>
+          <rect x="3" y="200" width="85" height="44" rx="3" fill="none" stroke="var(--edge)" stroke-width="1"></rect>
+          <text x="11" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text-soft)">40</text>
+          <text x="11" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">free</text>
+          <rect x="92" y="200" width="85" height="44" rx="3" fill="var(--surface-2)" stroke="var(--label)" stroke-width="1"></rect>
+          <text x="100" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">41</text>
+          <text x="100" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SD_SS opt</text>
+          <rect x="181" y="200" width="85" height="44" rx="3" fill="var(--info-wash)" stroke="var(--info)" stroke-width="1"></rect>
+          <text x="189" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">42</text>
+          <text x="189" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">TFT_RST</text>
+          <rect x="270" y="200" width="85" height="44" rx="3" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="278" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">43</text>
+          <text x="278" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">UART0 TX</text>
+          <rect x="359" y="200" width="85" height="44" rx="3" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="367" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">44</text>
+          <text x="367" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">UART0 RX</text>
+          <rect x="448" y="200" width="85" height="44" rx="3" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="456" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">45</text>
+          <text x="456" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">strap</text>
+          <rect x="537" y="200" width="85" height="44" rx="3" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="545" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">46</text>
+          <text x="545" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">strap</text>
+          <rect x="626" y="200" width="85" height="44" rx="3" fill="var(--surface-2)" stroke="var(--label)" stroke-width="1"></rect>
+          <text x="634" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">47</text>
+          <text x="634" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">SD_MOSI opt</text>
+          <rect x="715" y="200" width="85" height="44" rx="3" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="723" y="219" font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--text)">48</text>
+          <text x="723" y="234" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="var(--label)">RGB LED</text>
+          <rect x="3" y="256" width="13" height="13" rx="2.5" fill="var(--info-wash)" stroke="var(--info)"></rect>
+          <text x="22" y="267" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="var(--text-soft)">Display bus</text>
+          <rect x="99" y="256" width="13" height="13" rx="2.5" fill="var(--ok-wash)" stroke="var(--ok)"></rect>
+          <text x="118" y="267" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="var(--text-soft)">Sensors</text>
+          <rect x="169" y="256" width="13" height="13" rx="2.5" fill="var(--warn-wash)" stroke="var(--warn)"></rect>
+          <text x="188" y="267" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="var(--text-soft)">Reserved</text>
+          <rect x="246" y="256" width="13" height="13" rx="2.5" fill="var(--alert-wash)" stroke="var(--alert)"></rect>
+          <text x="265" y="267" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="var(--text-soft)">Unavailable</text>
+          <rect x="342" y="256" width="13" height="13" rx="2.5" fill="var(--surface-2)" stroke="var(--label)"></rect>
+          <text x="361" y="267" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="var(--text-soft)">microSD (optional)</text>
+          <rect x="483" y="256" width="13" height="13" rx="2.5" fill="none" stroke="var(--edge)"></rect>
+          <text x="502" y="267" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="var(--text-soft)">Free</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Where all 49 positions go.</b> After the display is wired, six pins remain free:
+        GPIO 3, 4, 6, 40, 48 and whichever of the microSD group you decline to use. GPIO48
+        drives the DevKitC-1 onboard RGB LED, which is why the optional SD chip select is 41
+        rather than the more obvious 48.
+      </figcaption>
+    </figure>
+
+    <h2 id="sensors">Sensors and buzzer</h2>
+
+    <p>
+      Two sensors share one I&sup2;C bus; the microphone is analogue and the buzzer is a tone
+      output. This group was wired first and has not moved since.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>Part</th><th>Signal</th><th>ESP32-S3</th><th>Supply</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td rowspan="2">SHT3x<br><span style="color:var(--label);font-size:12.5px">temp + humidity</span></td>
+            <td class="mono">SDA</td><td><span class="gpio">8</span></td>
+            <td rowspan="2" class="mono">3.3 V</td>
+            <td rowspan="2" class="wide">Address <code>0x44</code> with ADDR to GND, <code>0x45</code> to VDD. Bus runs at 100 kHz.</td>
+          </tr>
+          <tr><td class="mono">SCL</td><td><span class="gpio">9</span></td></tr>
+          <tr>
+            <td rowspan="2">BH1750<br><span style="color:var(--label);font-size:12.5px">illuminance</span></td>
+            <td class="mono">SDA</td><td><span class="gpio">8</span></td>
+            <td rowspan="2" class="mono">3.3 V</td>
+            <td rowspan="2" class="wide">Address <code>0x23</code> with ADDR to GND, <code>0x5C</code> to VDD. Same two wires as the SHT3x.</td>
+          </tr>
+          <tr><td class="mono">SCL</td><td><span class="gpio">9</span></td></tr>
+          <tr>
+            <td>MAX4466<br><span style="color:var(--label);font-size:12.5px">electret mic</span></td>
+            <td class="mono">OUT</td><td><span class="gpio">5</span></td>
+            <td class="mono">3.3 V</td>
+            <td class="wide">Must be ADC1. Must share ground with the ESP32.</td>
+          </tr>
+          <tr>
+            <td>Piezo buzzer</td>
+            <td class="mono">+</td><td><span class="gpio">7</span></td>
+            <td class="mono">GPIO</td>
+            <td class="wide">Driven with <code>tone()</code>. Three patterns, one per alarm type.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note alert">
+      <h4>Do not run the MAX4466 from 5 V</h4>
+      <p>
+        Its output centres at half its supply rail. On 5 V that puts the quiescent point at
+        2.5 V and swings peaks past the 3.3 V the ESP32 ADC can accept, which can damage the
+        pin. On 3.3 V the centre is 1.65 V, roughly 2048 counts, which is exactly what the boot
+        self-test checks for.
+      </p>
+    </div>
+
+    <h2 id="shield">Display shield</h2>
+
+    <p>
+      A 3.5 inch 320&times;480 ILI9481 panel in Arduino Uno shield form factor, hand wired to
+      the ESP32 rather than plugged in. Thirteen signals plus power, across four headers.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>Header</th><th>Shield label</th><th>Uno pin</th><th>ESP32-S3</th><th>Why this pin</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">J1</td><td class="mono">LCD_D0</td><td class="mono">D8</td><td><span class="gpio">10</span></td><td rowspan="8" class="wide">D0 to D7 sit contiguous in GPIO 10 to 17 so the whole byte is one register write rather than eight pin operations.</td></tr>
+          <tr><td class="mono">J1</td><td class="mono">LCD_D1</td><td class="mono">D9</td><td><span class="gpio">11</span></td></tr>
+          <tr><td class="mono">J2</td><td class="mono">LCD_D2</td><td class="mono">D2</td><td><span class="gpio">12</span></td></tr>
+          <tr><td class="mono">J2</td><td class="mono">LCD_D3</td><td class="mono">D3</td><td><span class="gpio">13</span></td></tr>
+          <tr><td class="mono">J2</td><td class="mono">LCD_D4</td><td class="mono">D4</td><td><span class="gpio">14</span></td></tr>
+          <tr><td class="mono">J2</td><td class="mono">LCD_D5</td><td class="mono">D5</td><td><span class="gpio">15</span></td></tr>
+          <tr><td class="mono">J2</td><td class="mono">LCD_D6</td><td class="mono">D6</td><td><span class="gpio">16</span></td></tr>
+          <tr><td class="mono">J2</td><td class="mono">LCD_D7</td><td class="mono">D7</td><td><span class="gpio">17</span></td></tr>
+          <tr><td class="mono">J3</td><td class="mono">LCD_RD</td><td class="mono">A0</td><td><span class="gpio">39</span></td><td class="wide">Read strobe.</td></tr>
+          <tr><td class="mono">J3</td><td class="mono">LCD_WR</td><td class="mono">A1</td><td><span class="gpio">38</span></td><td class="wide">Write strobe. The timing-critical line; keep it short.</td></tr>
+          <tr><td class="mono">J3</td><td class="mono">LCD_RS</td><td class="mono">A2</td><td><span class="gpio">2</span></td><td class="wide">Data/command select. Doubles as touch XM, so it must be ADC1.</td></tr>
+          <tr><td class="mono">J3</td><td class="mono">LCD_CS</td><td class="mono">A3</td><td><span class="gpio">1</span></td><td class="wide">Chip select. Doubles as touch YP, so it must be ADC1.</td></tr>
+          <tr><td class="mono">J3</td><td class="mono">LCD_RST</td><td class="mono">A4</td><td><span class="gpio">42</span></td><td class="wide">Panel reset.</td></tr>
+          <tr><td class="mono">J4</td><td class="mono">5V</td><td class="mono">5V</td><td><span class="gpio pwr">5V</span></td><td class="wide">Backlight rail. Draws roughly 120 to 150 mA.</td></tr>
+          <tr><td class="mono">J4</td><td class="mono">3.3V</td><td class="mono">3.3V</td><td><span class="gpio pwr">3V3</span></td><td class="wide"><strong>Required on this board.</strong> It is an input, not an output. See below.</td></tr>
+          <tr><td class="mono">J4</td><td class="mono">GND</td><td class="mono">GND</td><td><span class="gpio gnd">GND</span></td><td class="wide">Mandatory.</td></tr>
+          <tr><td class="mono">J4</td><td class="mono">GND</td><td class="mono">GND</td><td><span class="gpio gnd">GND</span></td><td class="wide">Second ground. Strongly recommended with thirteen switching lines.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <h4>Why LCD_RS and LCD_CS are pinned to GPIO 2 and 1</h4>
+      <p>
+        On a resistive touch panel these two lines are also the touch layer's XM and YP
+        electrodes, and reading a touch means calling <code>analogRead()</code> on them. That
+        makes them analogue inputs, which puts them under the same ADC1 requirement as the
+        microphone: ADC2 is unavailable while Wi-Fi is running. GPIO 1 and 2 are the only
+        low-numbered pins still free once the mic, buzzer and I&sup2;C bus have taken 5, 7, 8
+        and 9.
+      </p>
+    </div>
+
+    <h2 id="unconnected">Leave unconnected</h2>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Shield pin</th><th>Reason</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">J3 F_CS</td><td class="wide">Chip select for a W25Q32 flash footprint that is unpopulated on this board.</td></tr>
+          <tr><td class="mono">J4 RESET</td><td class="wide">Never let the shield pull the ESP32 reset line.</td></tr>
+          <tr><td class="mono">J1 top two</td><td class="wide">Unlabelled. Uno AREF and GND.</td></tr>
+          <tr><td class="mono">J2 bottom two</td><td class="wide">Unlabelled. Uno D0 and D1, which are RX and TX.</td></tr>
+          <tr><td class="mono">J4 VIN, IOREF</td><td class="wide">Not used.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="sd">Optional microSD</h2>
+
+    <p>
+      The shield breaks out a microSD slot on J1. Wire it only if you want the node to buffer
+      readings to disk while the broker is unreachable. Nothing in the current firmware uses it.
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Label</th><th>Uno pin</th><th>ESP32-S3</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">SD_SCK</td><td class="mono">D13</td><td><span class="gpio">18</span></td><td></td></tr>
+          <tr><td class="mono">SD_DO (MISO)</td><td class="mono">D12</td><td><span class="gpio">21</span></td><td></td></tr>
+          <tr><td class="mono">SD_DI (MOSI)</td><td class="mono">D11</td><td><span class="gpio">47</span></td><td></td></tr>
+          <tr><td class="mono">SD_SS</td><td class="mono">D10</td><td><span class="gpio">41</span></td><td class="wide">41 and not 48, because GPIO48 drives the onboard RGB LED.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="regulator">The regulator problem</h2>
+
+    <p class="crumb" style="margin-bottom:14px">Investigation closed 2026-09-13</p>
+
+    <p>
+      For a while this display did not work, and the symptom was misleading: the backlight lit
+      normally, the screen stayed permanently white, and reading the controller ID back over
+      the bus returned <code>0x00</code> or <code>0xFF</code>. A lit backlight makes the board
+      look alive, which sent the search toward the driver and the pin map before the power rail.
+    </p>
+
+    <p>
+      The backlight runs directly from 5 V. The controller and its bus buffers do not. On a
+      shield with an onboard 3.3 V regulator the J4 <code>3.3V</code> pin is an output and you
+      leave it alone; on a shield without one it is an input, and if you leave it alone the
+      entire logic domain has no supply at all. That is the state this board was in.
+    </p>
+
+    <h3>The test</h3>
+    <ol>
+      <li>Wire <strong>5V and GND only</strong>. Nothing else.</li>
+      <li>Power the ESP32 over USB.</li>
+      <li>Measure the shield's <code>3.3V</code> pin against GND.</li>
+    </ol>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Reading</th><th>Meaning</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">~3.3 V</td><td>Onboard regulator present</td><td class="wide">Leave <code>3.3V</code> unconnected.</td></tr>
+          <tr><td class="mono">0 V</td><td>No regulator</td><td class="wide">Wire shield <code>3.3V</code> to ESP32 <code>3V3</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note ok">
+      <h4>Result on this board: no regulator</h4>
+      <p>
+        A visual inspection found no AMS1117 or any other 3.3 V part. The only two ICs are U1
+        and U2, both marked <code>SM245TC</code>, which are octal bus transceivers. So J4
+        <code>3.3V</code> is an input and must be wired, and the shield's whole logic domain
+        including those buffers sits at 3.3 V.
+      </p>
+    </div>
+
+    <p>
+      That last detail also settles a question worth raising on any parallel shield. A plain
+      <code>HC245</code> running from 5 V has an input threshold near 3.5 V, which the S3's
+      3.3 V drive would meet only marginally. Here the buffers are powered from the same 3.3 V
+      rail the ESP32 drives, so the levels match by construction and the concern does not
+      apply. If you are wiring a different board, read the markings on its buffers first:
+      <code>LVC245</code> or <code>ALC245</code> is fine on 3.3 V logic, and a 5 V-powered
+      <code>HC245</code> is a reason to stop and reconsider.
+    </p>
+
+    <h2 id="practice">Wiring practice</h2>
+
+    <p>
+      This is a parallel bus with no error checking. Signal integrity problems do not announce
+      themselves; they show up as occasional wrong pixels, which is easy to blame on software.
+    </p>
+
+    <ul>
+      <li>
+        Keep the eight data wires, and <code>LCD_WR</code> above all, short and roughly equal
+        in length. Long floppy jumpers on the write strobe produce glitchy pixels.
+      </li>
+      <li>
+        Connect both grounds. Thirteen fast-switching lines need a return path, and a single
+        thin ground wire is not one.
+      </li>
+      <li>
+        Budget for the backlight. 120 to 150 mA is comfortable over USB, but leave headroom
+        when moving to a wall adapter.
+      </li>
+      <li>
+        Do not disturb GPIO 5, 7, 8, 9, 43 or 44 while rearranging the display wiring. Those
+        are the mic, the buzzer, the I&sup2;C bus and the serial console.
+      </li>
+    </ul>
+
+    <div class="note">
+      <h4>Confirm the bus before flashing the full sketch</h4>
+      <p>
+        <code>Test_TFT/Test_TFT.ino</code> exists for this. A red screen means the pin map and
+        the bus are correct. White or blank means checking <code>LCD_WR</code>,
+        <code>LCD_CS</code>, <code>LCD_RST</code> and the 3.3 V question, in that order, before
+        suspecting anything in the firmware.
+      </p>
+    </div>
+
+    <div class="next">
+      <a href="setup.html#tft"><b>Installing the pin map</b><span>TFT_eSPI reads its config from outside this repo</span></a>
+      <a href="firmware.html#preflight"><b>Boot self-test</b><span>What the node checks before it trusts any of this</span></a>
+    </div>
+
+    <p class="foot">Classroom Environment Monitor &middot; pin map confirmed against shield silkscreen, 2026-09-13</p>
+
+  </main>
+</div>
+</body>
+</html>
