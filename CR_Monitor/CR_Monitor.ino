@@ -32,7 +32,7 @@
 
  // ============================ MQTT ============================
  // Topics: classroom/<room>/<node>/{telemetry,status,alert}
- const char*    MQTT_HOST      = "192.168.1.5";   // <-- broker LAN IP
+ const char*    MQTT_HOST      = "192.168.1.8";   // <-- broker LAN IP
  const uint16_t MQTT_PORT      = 1883;
  // MQTT_USER / MQTT_PASS live in secrets.h
  const char*    ROOM_ID        = "room-101";       // <-- set per room
@@ -533,11 +533,15 @@
    analogSetPinAttenuation(TFT_DC, ADC_11db);
    analogSetPinAttenuation(TFT_CS, ADC_11db);
 
+   // Panel first, so the splash is up while the rest of the boot runs.
+   // tftBegin() only drives the parallel bus pins, so it cannot disturb
+   // the idle I2C levels preflightBus() reads next.
+   tftBegin();
+
    // Self-test before anything is brought up. Brings Wire up as a side
    // effect, so the sensor begin() calls below can use it directly.
    preflightBus();
 
-   tftBegin();
    preflightDisplay();
    preflightSummary();
    tftPreflight();        // same report on the TFT, then the dashboard

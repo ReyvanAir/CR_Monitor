@@ -35,6 +35,7 @@
  */
 
  #include <TFT_eSPI.h>
+ #include "Logo_APU.h"   // APU mark, baked to RGB565 for the boot splash
 
  TFT_eSPI tft = TFT_eSPI();
 
@@ -207,11 +208,38 @@
    }
  }
 
+ // ---- boot splash --------------------------------------------------
+ // The university mark on white with the author's name under it, held
+ // long enough to actually be read before the self-test report takes the
+ // screen. Blocking is fine here: nothing else has been started yet, and
+ // a splash that flashes past is not a splash.
+ const uint16_t SPLASH_MS = 2000;
+
+ static void tftSplash() {
+   tft.fillScreen(TFT_WHITE);
+
+   // Logo_APU.h is a plain uint16_t RGB565 array, which pushImage sends
+   // high byte first by default - the order this panel wants. If the mark
+   // ever comes up with red and blue traded, flip this to true.
+   tft.setSwapBytes(false);
+   tft.pushImage((PANEL_W - APU_LOGO_W) / 2, 12, APU_LOGO_W, APU_LOGO_H, apuLogo);
+
+   tft.setTextDatum(MC_DATUM);
+   tft.setTextColor(TFT_BLACK, TFT_WHITE);
+   tft.drawString(F("Suvin Raj K."), PANEL_W / 2, 282, 4);
+
+   delay(SPLASH_MS);
+   tft.setTextDatum(TL_DATUM);   // rest of this file assumes top-left
+ }
+
  // ============================ PUBLIC API ======================
  void tftBegin() {
    tft.init();
    tft.setRotation(1);
    tft.invertDisplay(PANEL_INVERT);
+
+   tftSplash();
+
    tft.fillScreen(COL_BG);
    tft.setTextDatum(TL_DATUM);
    tft.setTextColor(COL_VALUE, COL_BG);

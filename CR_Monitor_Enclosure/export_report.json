@@ -1,0 +1,122 @@
+[
+  {
+    "file": "03_battery_cradle.stl",
+    "triangles": 1168,
+    "dimensions_mm": [
+      101.2,
+      49.8,
+      8.0
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "04_esp32_carrier.stl",
+    "triangles": 1114,
+    "dimensions_mm": [
+      67.0,
+      45.6,
+      2.4
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "05_power_carrier.stl",
+    "triangles": 1006,
+    "dimensions_mm": [
+      44.0,
+      47.6,
+      2.4
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "01_rear_tray.stl",
+    "triangles": 7372,
+    "dimensions_mm": [
+      186.0,
+      136.0,
+      58.7
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "06_tft_clamp_L_1.stl",
+    "triangles": 288,
+    "dimensions_mm": [
+      18.0,
+      10.0,
+      2.4
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "06_tft_clamp_L_2.stl",
+    "triangles": 288,
+    "dimensions_mm": [
+      18.0,
+      10.0,
+      2.4
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "06_tft_clamp_R_1.stl",
+    "triangles": 292,
+    "dimensions_mm": [
+      18.0,
+      10.0,
+      2.4
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "06_tft_clamp_R_2.stl",
+    "triangles": 292,
+    "dimensions_mm": [
+      18.0,
+      10.0,
+      2.4
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "07_bh1750_carrier.stl",
+    "triangles": 816,
+    "dimensions_mm": [
+      47.0,
+      28.0,
+      3.5
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "07_max4466_carrier.stl",
+    "triangles": 806,
+    "dimensions_mm": [
+      47.0,
+      28.0,
+      3.5
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "07_sht3x_carrier.stl",
+    "triangles": 816,
+    "dimensions_mm": [
+      47.0,
+      28.0,
+      3.5
+    ],
+    "print_orientation": "back/flat surface down"
+  },
+  {
+    "file": "02_front_bezel.stl",
+    "triangles": 9250,
+    "dimensions_mm": [
+      186.0,
+      136.0,
+      13.1
+    ],
+    "print_orientation": "front face down"
+  }
+]

@@ -1,0 +1,176 @@
+{
+  "revision": "A",
+  "scope": "Digital checks of modelled geometry only. No physical fit, thermal, acoustic, optical, battery runtime or printer validation. Module envelopes are assumptions.",
+  "blender_version": "4.5.3 LTS",
+  "stl_units": "mm",
+  "parts": [
+    {
+      "part": "P01 | rear tray",
+      "file": "01_rear_tray.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 200579.59,
+      "bounding_box_mm": [
+        186.0,
+        136.0,
+        58.7
+      ]
+    },
+    {
+      "part": "P02 | front bezel",
+      "file": "02_front_bezel.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 67046.265,
+      "bounding_box_mm": [
+        186.0,
+        136.0,
+        13.1
+      ]
+    },
+    {
+      "part": "P03 | battery holder cradle",
+      "file": "03_battery_cradle.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 14240.471,
+      "bounding_box_mm": [
+        101.2,
+        49.8,
+        8.0
+      ]
+    },
+    {
+      "part": "P04 | ESP32 carrier",
+      "file": "04_esp32_carrier.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 2080.896,
+      "bounding_box_mm": [
+        67.0,
+        45.6,
+        2.4
+      ]
+    },
+    {
+      "part": "P05 | power module carrier",
+      "file": "05_power_carrier.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 3769.442,
+      "bounding_box_mm": [
+        44.0,
+        47.6,
+        2.4
+      ]
+    },
+    {
+      "part": "P06 | TFT clamp -1 0",
+      "file": "06_tft_clamp_L_1.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 380.914,
+      "bounding_box_mm": [
+        18.0,
+        10.0,
+        2.4
+      ]
+    },
+    {
+      "part": "P06 | TFT clamp -1 1",
+      "file": "06_tft_clamp_L_2.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 380.914,
+      "bounding_box_mm": [
+        18.0,
+        10.0,
+        2.4
+      ]
+    },
+    {
+      "part": "P06 | TFT clamp 1 0",
+      "file": "06_tft_clamp_R_1.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 380.914,
+      "bounding_box_mm": [
+        18.0,
+        10.0,
+        2.4
+      ]
+    },
+    {
+      "part": "P06 | TFT clamp 1 1",
+      "file": "06_tft_clamp_R_2.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 380.914,
+      "bounding_box_mm": [
+        18.0,
+        10.0,
+        2.4
+      ]
+    },
+    {
+      "part": "P07 | BH1750 carrier",
+      "file": "07_bh1750_carrier.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 2116.196,
+      "bounding_box_mm": [
+        47.0,
+        28.0,
+        3.5
+      ]
+    },
+    {
+      "part": "P07 | MAX4466 carrier",
+      "file": "07_max4466_carrier.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 2476.996,
+      "bounding_box_mm": [
+        47.0,
+        28.0,
+        3.5
+      ]
+    },
+    {
+      "part": "P07 | SHT3x carrier",
+      "file": "07_sht3x_carrier.stl",
+      "watertight": true,
+      "winding_consistent": true,
+      "connected_solids": 1,
+      "volume_mm3": 2243.796,
+      "bounding_box_mm": [
+        47.0,
+        28.0,
+        3.5
+      ]
+    }
+  ],
+  "printed_part_pairs_checked": 18,
+  "printed_part_interferences": [],
+  "reference_pairs_checked": 51,
+  "reference_interferences": [],
+  "exploded_animation_frame_80_verified": true,
+  "nominal_depth_clearance_mm": {
+    "display_header_to_controller_wiring_envelope": 6.6,
+    "display_header_to_holder_envelope": 3.2,
+    "case_lip_per_side": 0.35,
+    "rear_to_front_seam": 0.3
+  },
+  "pass": true
+}
